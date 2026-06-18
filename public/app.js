@@ -2,7 +2,8 @@ const state = {
   token: localStorage.getItem("swiToken"),
   user: null,
   location: null,
-  selectedFiles: []
+  selectedFiles: [],
+  shareContext: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -165,10 +166,14 @@ $("#reportForm").addEventListener("submit", async (event) => {
       await updateConnection();
       return;
     }
+    const shareContext = {
+      personName: state.user.name,
+      villageName: $("#villageSelect").selectedOptions[0]?.textContent || "",
+      reportDate: form.elements.date.value
+    };
     const data = makeReportFormData(form);
     const result = await api("/api/reports", { method: "POST", body: data });
-    $("#shareUrl").value = result.shareUrl;
-    $("#shareDialog").classList.remove("hidden");
+    openShare(result.shareUrl, shareContext);
     resetReportForm(form);
     await loadReports();
   } catch (error) {
@@ -297,14 +302,24 @@ async function loadReports() {
         <strong>${escapeHtml(report.village_name)} · ${escapeHtml(report.report_date)}</strong>
         <p>${escapeHtml(report.person_name)} · ${report.media_count} attachment${report.media_count === 1 ? "" : "s"}</p>
       </div>
-      <button data-share="${escapeHtml(report.shareUrl)}">Share</button>
+      <button
+        data-share="${escapeHtml(report.shareUrl)}"
+        data-person="${escapeHtml(report.person_name)}"
+        data-village="${escapeHtml(report.village_name)}"
+        data-date="${escapeHtml(report.report_date)}"
+      >Share</button>
     </article>
   `).join("") : "<p>No reports submitted yet.</p>";
-  $$("[data-share]").forEach((button) => button.addEventListener("click", () => openShare(button.dataset.share)));
+  $$("[data-share]").forEach((button) => button.addEventListener("click", () => openShare(button.dataset.share, {
+    personName: button.dataset.person,
+    villageName: button.dataset.village,
+    reportDate: button.dataset.date
+  })));
 }
 
-function openShare(url) {
+function openShare(url, context = null) {
   $("#shareUrl").value = url;
+  state.shareContext = context;
   $("#shareDialog").classList.remove("hidden");
 }
 
@@ -316,7 +331,13 @@ $("#copyButton").addEventListener("click", async () => {
 });
 $("#whatsappButton").addEventListener("click", () => {
   const url = $("#shareUrl").value;
-  const message = `SWI Daily Field Report\n\nView the report, photos and videos:\n${url}`;
+  const context = state.shareContext || {};
+  const details = [
+    context.personName ? `Field representative: ${context.personName}` : "",
+    context.villageName ? `Village: ${context.villageName}` : "",
+    context.reportDate ? `Report date: ${context.reportDate}` : ""
+  ].filter(Boolean).join("\n");
+  const message = `SWI Daily Field Report\n${details ? `\n${details}\n` : ""}\nView the report, photos and videos:\n${url}`;
   window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener");
 });
 
