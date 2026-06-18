@@ -13,8 +13,19 @@ async function api(path, options = {}) {
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   if (options.body && !(options.body instanceof FormData)) headers.set("Content-Type", "application/json");
   const response = await fetch(path, { ...options, headers });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || "Request failed.");
+  const text = await response.text();
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { error: text.slice(0, 300) };
+    }
+  }
+  if (!response.ok) {
+    const message = payload.error || payload.message || `Request failed with status ${response.status}`;
+    throw new Error(message.includes(String(response.status)) ? message : `${message} (${response.status})`);
+  }
   return payload;
 }
 
