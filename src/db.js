@@ -9,7 +9,7 @@ fs.mkdirSync(dataDir, { recursive: true });
 
 const db = new Database(path.join(dataDir, "swi-reports.sqlite"));
 db.pragma("foreign_keys = ON");
-db.pragma("journal_mode = WAL");
+db.pragma(`journal_mode = ${process.env.DB_JOURNAL_MODE || "WAL"}`);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
