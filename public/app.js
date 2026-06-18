@@ -151,24 +151,25 @@ $("#locationButton").addEventListener("click", () => {
 
 $("#reportForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   const button = $("#submitButton");
   button.disabled = true;
   button.textContent = navigator.onLine ? "Uploading…" : "Saving offline…";
   $("#formMessage").textContent = "";
   try {
     if (!navigator.onLine) {
-      await queueCurrentReport(event.currentTarget);
-      resetReportForm(event.currentTarget);
+      await queueCurrentReport(form);
+      resetReportForm(form);
       $("#formMessage").textContent = "Saved offline. It will upload automatically when this app is online.";
       $("#formMessage").classList.add("success");
       await updateConnection();
       return;
     }
-    const data = makeReportFormData(event.currentTarget);
+    const data = makeReportFormData(form);
     const result = await api("/api/reports", { method: "POST", body: data });
     $("#shareUrl").value = result.shareUrl;
     $("#shareDialog").classList.remove("hidden");
-    resetReportForm(event.currentTarget);
+    resetReportForm(form);
     await loadReports();
   } catch (error) {
     $("#formMessage").textContent = error.message;
@@ -371,10 +372,11 @@ async function loadAdminVillages() {
 
 $("#villageForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget));
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form));
   try {
     await api("/api/admin/villages", { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
+    form.reset();
     await Promise.all([loadAdminVillages(), loadVillages()]);
   } catch (error) { alert(error.message); }
 });
@@ -400,23 +402,25 @@ async function loadAdminUsers() {
 
 $("#userForm").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const data = Object.fromEntries(new FormData(event.currentTarget));
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form));
   try {
     await api("/api/admin/users", { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
+    form.reset();
     await loadAdminUsers();
   } catch (error) { alert(error.message); }
 });
 
 $("#passwordForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  const form = event.currentTarget;
   const message = $("#passwordMessage");
   message.textContent = "";
   message.classList.remove("success");
-  const data = Object.fromEntries(new FormData(event.currentTarget));
+  const data = Object.fromEntries(new FormData(form));
   try {
     await api("/api/auth/change-password", { method: "POST", body: JSON.stringify(data) });
-    event.currentTarget.reset();
+    form.reset();
     message.textContent = "Password updated.";
     message.classList.add("success");
   } catch (error) {
