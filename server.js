@@ -2,6 +2,7 @@ require("node:fs").existsSync(".env") && process.loadEnvFile(".env");
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const express = require("express");
 const multer = require("multer");
@@ -13,7 +14,7 @@ const { getOAuthClient, uploadReportBundle, getConnectionStatus } = require("./s
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const appUrl = process.env.APP_URL || `http://localhost:${port}`;
-const uploadDir = path.join(process.cwd(), "uploads");
+const uploadDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), "swi-field-reports-uploads");
 fs.mkdirSync(uploadDir, { recursive: true });
 
 const upload = multer({
