@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: swi-field-reports
+    runtime: node
+    plan: starter
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 24.14.1
+      - key: DATA_DIR
+        value: /var/data
+      - key: JWT_SECRET
+        generateValue: true
+      - key: INITIAL_ADMIN_EMAIL
+        value: sindhjirasoi@gmail.com
+      - key: INITIAL_ADMIN_PASSWORD
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+    disk:
+      name: swi-data
+      mountPath: /var/data
+      sizeGB: 1

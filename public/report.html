@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#285943">
+  <title>SWI Daily Field Report</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="app-header"><div><span class="eyebrow">SWI</span><h1>Daily Field Report</h1></div></header>
+  <main>
+    <article id="report" class="card"><p>Loading report…</p></article>
+  </main>
+  <script>
+    const token = location.pathname.split("/").pop();
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+    })[c]);
+    fetch(`/api/public/reports/${token}`)
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error);
+        return data;
+      })
+      .then((report) => {
+        const media = report.media.map((file) => {
+          const view = file.mime_type.startsWith("image/")
+            ? `<a href="${escapeHtml(file.public_url)}" target="_blank" rel="noopener"><img src="${escapeHtml(file.thumbnail_url)}" alt="${escapeHtml(file.original_name)}"></a>`
+            : `<a href="${escapeHtml(file.public_url)}" target="_blank" rel="noopener">Open video: ${escapeHtml(file.original_name)}</a>`;
+          return `<div class="media-chip">${view}</div>`;
+        }).join("");
+        document.querySelector("#report").innerHTML = `
+          <span class="eyebrow">${escapeHtml(report.village_name)}</span>
+          <h2>${escapeHtml(report.report_date)}</h2>
+          <p><strong>Field person:</strong> ${escapeHtml(report.person_name)}</p>
+          ${report.latitude != null ? `<p><strong>GPS:</strong> ${report.latitude}, ${report.longitude}</p>` : ""}
+          <hr>
+          <h3>Report</h3>
+          <p style="white-space:pre-wrap">${escapeHtml(report.report_text)}</p>
+          ${media ? `<h3>Photos and videos</h3><div class="media-preview">${media}</div>` : ""}
+        `;
+      })
+      .catch((error) => {
+        document.querySelector("#report").innerHTML = `<h2>Report unavailable</h2><p>${escapeHtml(error.message)}</p>`;
+      });
+  </script>
+</body>
+</html>

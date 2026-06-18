@@ -1,0 +1,25 @@
+{
+  "name": "swi-field-reports",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Installable SWI village photo and daily reporting app",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "test": "node --test --test-isolation=none"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "better-sqlite3": "^12.11.1",
+    "docx": "^9.5.1",
+    "express": "^5.1.0",
+    "googleapis": "^159.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "sharp": "^0.35.1"
+  }
+}

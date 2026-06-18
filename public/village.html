@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#285943">
+  <title>SWI Village Reports</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="app-header"><div><span class="eyebrow">SWI</span><h1>Village Reports</h1></div></header>
+  <main>
+    <section class="card">
+      <span class="eyebrow">Village</span>
+      <h2 id="villageName">Loading…</h2>
+      <p>Daily reports, photos and videos submitted by the field team.</p>
+    </section>
+    <section id="reports" class="stack-list"></section>
+  </main>
+  <script>
+    const token = location.pathname.split("/").pop();
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+    })[c]);
+    fetch(`/api/public/villages/${token}`)
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error);
+        return data;
+      })
+      .then((data) => {
+        document.title = `${data.village} - SWI Reports`;
+        document.querySelector("#villageName").textContent = data.village;
+        document.querySelector("#reports").innerHTML = data.reports.length
+          ? data.reports.map((report) => `
+              <article class="card">
+                <span class="eyebrow">${escapeHtml(report.report_date)}</span>
+                <h2>${escapeHtml(report.person_name)}</h2>
+                <p>${escapeHtml(report.report_text.slice(0, 240))}${report.report_text.length > 240 ? "…" : ""}</p>
+                <p class="field-note">${report.media_count} photo/video attachment${report.media_count === 1 ? "" : "s"}</p>
+                <p><a href="${escapeHtml(report.shareUrl)}">View complete report</a></p>
+              </article>
+            `).join("")
+          : '<div class="card"><p>No reports have been submitted for this village yet.</p></div>';
+      })
+      .catch((error) => {
+        document.querySelector("#villageName").textContent = "Unavailable";
+        document.querySelector("#reports").innerHTML = `<div class="card"><p>${escapeHtml(error.message)}</p></div>`;
+      });
+  </script>
+</body>
+</html>
