@@ -8,6 +8,9 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const MAX_UPLOAD_BYTES = 28 * 1024 * 1024;
+const MAX_PHOTO_EDGE = 1600;
+const PHOTO_QUALITY = 0.75;
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -133,15 +136,78 @@ $("#villageSelect").addEventListener("change", saveDraft);
 $("#reportTypeSelect").addEventListener("change", saveDraft);
 $("#reportDate").addEventListener("change", saveDraft);
 
-function addSelectedFiles(files) {
-  const combined = [...state.selectedFiles, ...files];
-  state.selectedFiles = combined.slice(0, 50);
-  if (combined.length > 50) alert("Only 50 files can be attached to one report.");
-  renderMediaPreview();
+function formatFileSize(bytes) {
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-$("#mediaInput").addEventListener("change", (event) => addSelectedFiles([...event.target.files]));
-$("#cameraInput").addEventListener("change", (event) => addSelectedFiles([...event.target.files]));
+function selectedUploadSize(files = state.selectedFiles) {
+  return files.reduce((sum, file) => sum + file.size, 0);
+}
+
+function imageFromFile(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const url = URL.createObjectURL(file);
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(`Could not prepare ${file.name}.`));
+    };
+    image.src = url;
+  });
+}
+
+async function compressPhoto(file) {
+  if (!file.type.startsWith("image/") || file.size <= 900 * 1024) return file;
+  try {
+    const image = await imageFromFile(file);
+    const scale = Math.min(1, MAX_PHOTO_EDGE / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", PHOTO_QUALITY));
+    if (!blob || blob.size >= file.size) return file;
+    const name = file.name.replace(/\.[^.]+$/, "") || "photo";
+    return new File([blob], `${name}.jpg`, { type: "image/jpeg", lastModified: file.lastModified });
+  } catch (error) {
+    console.warn("Photo compression failed:", error.message);
+    return file;
+  }
+}
+
+async function addSelectedFiles(files) {
+  $("#formMessage").classList.remove("success");
+  $("#formMessage").textContent = files.length ? "Preparing selected files..." : "";
+  const prepared = [];
+  for (const file of files) prepared.push(await compressPhoto(file));
+
+  const combined = [...state.selectedFiles, ...prepared];
+  state.selectedFiles = combined.slice(0, 50);
+  if (combined.length > 50) alert("Only 50 files can be attached to one report.");
+  while (selectedUploadSize() > MAX_UPLOAD_BYTES && state.selectedFiles.length) {
+    const removed = state.selectedFiles.pop();
+    alert(`${removed.name} was removed because the selected files are above ${formatFileSize(MAX_UPLOAD_BYTES)}. Please submit large videos separately.`);
+  }
+  renderMediaPreview();
+  const total = selectedUploadSize();
+  $("#formMessage").textContent = state.selectedFiles.length
+    ? `Selected ${state.selectedFiles.length} file${state.selectedFiles.length === 1 ? "" : "s"} (${formatFileSize(total)}).`
+    : "";
+}
+
+$("#mediaInput").addEventListener("change", (event) => {
+  addSelectedFiles([...event.target.files]).catch((error) => ($("#formMessage").textContent = error.message));
+  event.target.value = "";
+});
+$("#cameraInput").addEventListener("change", (event) => {
+  addSelectedFiles([...event.target.files]).catch((error) => ($("#formMessage").textContent = error.message));
+  event.target.value = "";
+});
 
 function renderMediaPreview() {
   $("#mediaPreview").innerHTML = state.selectedFiles.map((file) => {
@@ -179,6 +245,9 @@ $("#reportForm").addEventListener("submit", async (event) => {
   button.textContent = navigator.onLine ? "Uploading…" : "Saving offline…";
   $("#formMessage").textContent = "";
   try {
+    if (selectedUploadSize() > MAX_UPLOAD_BYTES) {
+      throw new Error(`This report is too large to upload at one time. Please keep the selected files under ${formatFileSize(MAX_UPLOAD_BYTES)}, or submit large videos separately.`);
+    }
     if (!navigator.onLine) {
       await queueCurrentReport(form);
       resetReportForm(form);

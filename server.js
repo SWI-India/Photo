@@ -16,16 +16,27 @@ const port = Number(process.env.PORT || 3000);
 const appUrl = process.env.APP_URL || `http://localhost:${port}`;
 const uploadDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), "swi-field-reports-uploads");
 const reportTypes = new Set(["Refill Visit", "General Visit", "Monitoring Visit"]);
+const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES || 28 * 1024 * 1024);
 fs.mkdirSync(uploadDir, { recursive: true });
 
 const upload = multer({
   dest: uploadDir,
-  limits: { files: 50, fileSize: 100 * 1024 * 1024 },
+  limits: { files: 50, fileSize: maxUploadBytes },
   fileFilter(req, file, callback) {
     const allowed = file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/");
     callback(allowed ? null : new Error("Only photos and videos are allowed."), allowed);
   }
 });
+
+function rejectLargeUpload(req, res, next) {
+  const contentLength = Number(req.headers["content-length"] || 0);
+  if (contentLength > maxUploadBytes) {
+    return res.status(413).json({
+      error: `This report is too large to upload at one time. Please keep the selected photos/videos under ${Math.floor(maxUploadBytes / 1024 / 1024)} MB, or submit large videos in a separate report.`
+    });
+  }
+  next();
+}
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(process.cwd(), "public")));
@@ -85,7 +96,7 @@ app.get("/api/reports", authenticate, (req, res) => {
   })));
 });
 
-app.post("/api/reports", authenticate, upload.array("media", 50), async (req, res, next) => {
+app.post("/api/reports", authenticate, rejectLargeUpload, upload.array("media", 50), async (req, res, next) => {
   const files = req.files || [];
   try {
     const villageId = Number(req.body.villageId);
@@ -102,6 +113,12 @@ app.post("/api/reports", authenticate, upload.array("media", 50), async (req, re
       return res.status(400).json({ error: "Report must contain 1 to 3,000 characters." });
     }
     if (files.length > 50) return res.status(400).json({ error: "Maximum 50 files allowed." });
+    const totalUploadBytes = files.reduce((sum, file) => sum + file.size, 0);
+    if (totalUploadBytes > maxUploadBytes) {
+      return res.status(413).json({
+        error: `This report is too large to upload at one time. Please keep the selected photos/videos under ${Math.floor(maxUploadBytes / 1024 / 1024)} MB, or submit large videos in a separate report.`
+      });
+    }
 
     const village = db.prepare("SELECT id, name FROM villages WHERE id = ? AND active = 1").get(villageId);
     if (!village) return res.status(400).json({ error: "Please select an active village." });
@@ -344,7 +361,7 @@ app.use((error, req, res, next) => {
   console.error(error);
   if (error instanceof multer.MulterError) {
     return res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE"
-      ? "Each file must be 100 MB or smaller."
+      ? `Each file must be ${Math.floor(maxUploadBytes / 1024 / 1024)} MB or smaller.`
       : "Maximum 50 files are allowed." });
   }
   res.status(error.code === "DRIVE_NOT_CONNECTED" ? 503 : 500).json({
