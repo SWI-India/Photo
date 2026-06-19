@@ -9,6 +9,7 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const MAX_UPLOAD_BYTES = 28 * 1024 * 1024;
+const DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024;
 const MAX_PHOTO_EDGE = 1600;
 const PHOTO_QUALITY = 0.75;
 
@@ -189,14 +190,10 @@ async function addSelectedFiles(files) {
   const combined = [...state.selectedFiles, ...prepared];
   state.selectedFiles = combined.slice(0, 50);
   if (combined.length > 50) alert("Only 50 files can be attached to one report.");
-  while (selectedUploadSize() > MAX_UPLOAD_BYTES && state.selectedFiles.length) {
-    const removed = state.selectedFiles.pop();
-    alert(`${removed.name} was removed because the selected files are above ${formatFileSize(MAX_UPLOAD_BYTES)}. Please submit large videos separately.`);
-  }
   renderMediaPreview();
   const total = selectedUploadSize();
   $("#formMessage").textContent = state.selectedFiles.length
-    ? `Selected ${state.selectedFiles.length} file${state.selectedFiles.length === 1 ? "" : "s"} (${formatFileSize(total)}).`
+    ? `Selected ${state.selectedFiles.length} file${state.selectedFiles.length === 1 ? "" : "s"} (${formatFileSize(total)}). Large videos will upload in parts.`
     : "";
 }
 
@@ -245,9 +242,6 @@ $("#reportForm").addEventListener("submit", async (event) => {
   button.textContent = navigator.onLine ? "Uploading…" : "Saving offline…";
   $("#formMessage").textContent = "";
   try {
-    if (selectedUploadSize() > MAX_UPLOAD_BYTES) {
-      throw new Error(`This report is too large to upload at one time. Please keep the selected files under ${formatFileSize(MAX_UPLOAD_BYTES)}, or submit large videos separately.`);
-    }
     if (!navigator.onLine) {
       await queueCurrentReport(form);
       resetReportForm(form);
@@ -262,8 +256,7 @@ $("#reportForm").addEventListener("submit", async (event) => {
       reportType: form.elements.reportType.value,
       reportDate: form.elements.date.value
     };
-    const data = makeReportFormData(form);
-    const result = await api("/api/reports", { method: "POST", body: data });
+    const result = await submitReportValues(reportValuesFromForm(form), (message) => ($("#formMessage").textContent = message));
     openShare(result.shareUrl, shareContext);
     resetReportForm(form);
     await loadReports();
@@ -275,7 +268,34 @@ $("#reportForm").addEventListener("submit", async (event) => {
   }
 });
 
-function makeReportFormData(form, queued) {
+function reportValuesFromForm(form) {
+  return {
+    villageId: form.elements.villageId.value,
+    reportType: form.elements.reportType.value,
+    date: form.elements.date.value,
+    report: form.elements.report.value,
+    latitude: state.location?.latitude,
+    longitude: state.location?.longitude,
+    files: state.selectedFiles
+  };
+}
+
+function splitUploadFiles(files) {
+  const directFiles = [];
+  const chunkedFiles = [];
+  let directBytes = 0;
+  for (const file of files) {
+    if (file.size > MAX_UPLOAD_BYTES || directBytes + file.size > MAX_UPLOAD_BYTES) {
+      chunkedFiles.push(file);
+    } else {
+      directFiles.push(file);
+      directBytes += file.size;
+    }
+  }
+  return { directFiles, chunkedFiles };
+}
+
+function makeReportFormData(form, queued, filesOverride = null) {
   const data = new FormData();
   const values = queued || {
     villageId: form.elements.villageId.value,
@@ -286,15 +306,64 @@ function makeReportFormData(form, queued) {
     longitude: state.location?.longitude,
     files: state.selectedFiles
   };
+  const files = filesOverride || values.files;
   data.set("villageId", values.villageId);
   data.set("reportType", values.reportType || "General Visit");
   data.set("date", values.date);
   data.set("report", values.report);
   if (values.latitude != null) data.set("latitude", values.latitude);
   if (values.longitude != null) data.set("longitude", values.longitude);
-  data.set("mediaDates", JSON.stringify(values.files.map((file) => file.lastModified)));
-  values.files.forEach((file) => data.append("media", file, file.name));
+  data.set("mediaDates", JSON.stringify(files.map((file) => file.lastModified)));
+  files.forEach((file) => data.append("media", file, file.name));
   return data;
+}
+
+async function submitReportValues(values, onProgress = () => {}) {
+  const { directFiles, chunkedFiles } = splitUploadFiles(values.files);
+  if (chunkedFiles.length) {
+    onProgress(`Creating report. ${chunkedFiles.length} large file${chunkedFiles.length === 1 ? "" : "s"} will upload in parts...`);
+  }
+  const result = await api("/api/reports", {
+    method: "POST",
+    body: makeReportFormData(null, values, directFiles)
+  });
+  for (let index = 0; index < chunkedFiles.length; index++) {
+    await uploadLargeFile(result.id, chunkedFiles[index], index + 1, chunkedFiles.length, onProgress);
+  }
+  return result;
+}
+
+async function uploadLargeFile(reportId, file, number, totalFiles, onProgress) {
+  const init = await api(`/api/reports/${reportId}/media/init`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      lastModified: file.lastModified
+    })
+  });
+  const chunkSize = init.chunkSize || DEFAULT_CHUNK_BYTES;
+  let offset = 0;
+  while (offset < file.size) {
+    const end = Math.min(offset + chunkSize, file.size) - 1;
+    const chunk = file.slice(offset, end + 1);
+    const response = await fetch(`/api/uploads/${init.uploadId}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        "Content-Type": "application/octet-stream",
+        "Content-Range": `bytes ${offset}-${end}/${file.size}`
+      },
+      body: chunk
+    });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) : {};
+    if (!response.ok) throw new Error(payload.error || `Upload failed with status ${response.status}`);
+    offset = payload.uploadedBytes || end + 1;
+    const percent = Math.min(100, Math.round((offset / file.size) * 100));
+    onProgress(`Uploading large file ${number}/${totalFiles}: ${file.name} (${percent}%)`);
+  }
 }
 
 function resetReportForm(form) {
@@ -382,7 +451,7 @@ async function flushQueue() {
   const queued = await getQueuedReports();
   for (const report of queued.sort((a, b) => a.createdAt - b.createdAt)) {
     try {
-      await api("/api/reports", { method: "POST", body: makeReportFormData(null, report) });
+      await submitReportValues(report);
       await queueOperation("readwrite", (store) => store.delete(report.id));
     } catch (error) {
       console.warn("Queued report remains pending:", error.message);

@@ -9,7 +9,14 @@ const multer = require("multer");
 const bcrypt = require("bcryptjs");
 const { db, getSetting, setSetting } = require("./src/db");
 const { authenticate, requireAdmin, issueToken, seedAdmin } = require("./src/auth");
-const { getOAuthClient, uploadReportBundle, getConnectionStatus } = require("./src/drive");
+const {
+  getOAuthClient,
+  uploadReportBundle,
+  getConnectionStatus,
+  startResumableUpload,
+  uploadResumableChunk,
+  shareDriveFile
+} = require("./src/drive");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -17,6 +24,8 @@ const appUrl = process.env.APP_URL || `http://localhost:${port}`;
 const uploadDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), "swi-field-reports-uploads");
 const reportTypes = new Set(["Refill Visit", "General Visit", "Monitoring Visit"]);
 const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES || 28 * 1024 * 1024);
+const maxChunkBytes = Number(process.env.MAX_CHUNK_BYTES || 8 * 1024 * 1024);
+const maxLargeUploadBytes = Number(process.env.MAX_LARGE_UPLOAD_BYTES || 2 * 1024 * 1024 * 1024);
 fs.mkdirSync(uploadDir, { recursive: true });
 
 const upload = multer({
@@ -185,6 +194,111 @@ app.post("/api/reports", authenticate, rejectLargeUpload, upload.array("media", 
     next(error);
   } finally {
     for (const file of files) fs.rm(file.path, { force: true }, () => {});
+  }
+});
+
+app.post("/api/reports/:id/media/init", authenticate, async (req, res, next) => {
+  try {
+    const report = db.prepare(`
+      SELECT r.id, r.user_id, r.drive_folder_id
+      FROM reports r
+      WHERE r.id = ?
+    `).get(Number(req.params.id));
+    if (!report || (req.user.role !== "admin" && report.user_id !== req.user.id)) {
+      return res.status(404).json({ error: "Report not found." });
+    }
+    if (!report.drive_folder_id) {
+      return res.status(400).json({ error: "Report folder is not ready. Please retry the report upload." });
+    }
+
+    const originalName = path.basename(String(req.body.name || "video")).slice(0, 180);
+    const mimeType = String(req.body.mimeType || "application/octet-stream");
+    const fileSize = Number(req.body.size || 0);
+    if (!originalName || !(mimeType.startsWith("image/") || mimeType.startsWith("video/"))) {
+      return res.status(400).json({ error: "Only photos and videos are allowed." });
+    }
+    if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > maxLargeUploadBytes) {
+      return res.status(400).json({
+        error: `File size must be between 1 byte and ${Math.floor(maxLargeUploadBytes / 1024 / 1024)} MB.`
+      });
+    }
+
+    const uploadUrl = await startResumableUpload({
+      folderId: report.drive_folder_id,
+      name: originalName,
+      mimeType,
+      size: fileSize
+    });
+    if (!uploadUrl) throw new Error("Google Drive did not return an upload session.");
+
+    const uploadId = crypto.randomUUID();
+    db.prepare(`
+      INSERT INTO upload_sessions (id, report_id, user_id, original_name, mime_type, file_size, upload_url)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(uploadId, report.id, req.user.id, originalName, mimeType, fileSize, uploadUrl);
+
+    res.status(201).json({ uploadId, chunkSize: maxChunkBytes });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/api/uploads/:id", authenticate, express.raw({ type: "*/*", limit: `${Math.ceil(maxChunkBytes / 1024 / 1024) + 1}mb` }), async (req, res, next) => {
+  try {
+    const session = db.prepare("SELECT * FROM upload_sessions WHERE id = ?").get(req.params.id);
+    if (!session || (req.user.role !== "admin" && session.user_id !== req.user.id)) {
+      return res.status(404).json({ error: "Upload session not found." });
+    }
+    if (session.status === "complete") {
+      return res.json({ done: true, uploadedBytes: session.file_size, publicUrl: session.public_url });
+    }
+
+    const range = String(req.headers["content-range"] || "");
+    const match = range.match(/^bytes (\d+)-(\d+)\/(\d+)$/);
+    if (!match) return res.status(400).json({ error: "Content-Range header is required." });
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    const total = Number(match[3]);
+    const chunk = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+
+    if (total !== session.file_size || start !== session.uploaded_bytes || end < start || chunk.length !== end - start + 1) {
+      return res.status(409).json({
+        error: "Upload chunk is out of sequence. Please retry this file upload.",
+        uploadedBytes: session.uploaded_bytes
+      });
+    }
+    if (chunk.length > maxChunkBytes) {
+      return res.status(413).json({ error: `Upload chunks must be ${Math.floor(maxChunkBytes / 1024 / 1024)} MB or smaller.` });
+    }
+
+    const result = await uploadResumableChunk({
+      uploadUrl: session.upload_url,
+      chunk,
+      mimeType: session.mime_type,
+      start,
+      end,
+      total
+    });
+
+    if (!result.done) {
+      db.prepare("UPDATE upload_sessions SET uploaded_bytes = ? WHERE id = ?").run(result.uploadedBytes, session.id);
+      return res.json({ done: false, uploadedBytes: result.uploadedBytes });
+    }
+
+    await shareDriveFile(result.fileId);
+    db.prepare(`
+      INSERT INTO media (report_id, original_name, mime_type, drive_file_id, public_url)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(session.report_id, session.original_name, session.mime_type, result.fileId, result.publicUrl);
+    db.prepare(`
+      UPDATE upload_sessions
+      SET uploaded_bytes = ?, drive_file_id = ?, public_url = ?, status = 'complete'
+      WHERE id = ?
+    `).run(total, result.fileId, result.publicUrl, session.id);
+
+    res.json({ done: true, uploadedBytes: total, publicUrl: result.publicUrl });
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -359,6 +473,9 @@ app.get("/village/:token", (req, res) => {
 
 app.use((error, req, res, next) => {
   console.error(error);
+  if (error.type === "entity.too.large") {
+    return res.status(413).json({ error: `Upload chunks must be ${Math.floor(maxChunkBytes / 1024 / 1024)} MB or smaller.` });
+  }
   if (error instanceof multer.MulterError) {
     return res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE"
       ? `Each file must be ${Math.floor(maxUploadBytes / 1024 / 1024)} MB or smaller.`

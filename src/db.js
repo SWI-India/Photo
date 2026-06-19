@@ -62,6 +62,21 @@ db.exec(`
     public_url TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS upload_sessions (
+    id TEXT PRIMARY KEY,
+    report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    original_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    file_size INTEGER NOT NULL,
+    uploaded_bytes INTEGER NOT NULL DEFAULT 0,
+    upload_url TEXT NOT NULL,
+    drive_file_id TEXT,
+    public_url TEXT,
+    status TEXT NOT NULL DEFAULT 'uploading',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 const villageColumns = db.pragma("table_info(villages)");

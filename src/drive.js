@@ -172,6 +172,71 @@ async function uploadReportBundle(report, files) {
   };
 }
 
+async function startResumableUpload({ folderId, name, mimeType, size }) {
+  const auth = getOAuthClient();
+  if (!auth || !getSetting("google_refresh_token")) {
+    const error = new Error("Google Drive is not connected. Ask an administrator to connect it.");
+    error.code = "DRIVE_NOT_CONNECTED";
+    throw error;
+  }
+  const token = await auth.getAccessToken();
+  const response = await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,webViewLink", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token.token || token}`,
+      "Content-Type": "application/json; charset=UTF-8",
+      "X-Upload-Content-Type": mimeType,
+      "X-Upload-Content-Length": String(size)
+    },
+    body: JSON.stringify({
+      name,
+      parents: [folderId]
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`Could not start Google Drive upload (${response.status}).`);
+  }
+  return response.headers.get("location");
+}
+
+async function uploadResumableChunk({ uploadUrl, chunk, mimeType, start, end, total }) {
+  const auth = getOAuthClient();
+  const token = auth ? await auth.getAccessToken() : null;
+  const response = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token.token || token}` } : {}),
+      "Content-Length": String(chunk.length),
+      "Content-Type": mimeType,
+      "Content-Range": `bytes ${start}-${end}/${total}`
+    },
+    body: chunk
+  });
+  if (response.status === 308) {
+    const range = response.headers.get("range");
+    const uploadedBytes = range ? Number(range.split("-").pop()) + 1 : end + 1;
+    return { done: false, uploadedBytes };
+  }
+  if (response.ok) {
+    const data = await response.json();
+    return { done: true, uploadedBytes: total, fileId: data.id, publicUrl: data.webViewLink };
+  }
+  if (response.status === 404) {
+    const error = new Error("The Google Drive upload session expired. Please retry the report upload.");
+    error.code = "DRIVE_SESSION_EXPIRED";
+    throw error;
+  }
+  throw new Error(`Google Drive chunk upload failed (${response.status}).`);
+}
+
+async function shareDriveFile(fileId) {
+  const drive = requireDrive();
+  await drive.permissions.create({
+    fileId,
+    requestBody: { role: "reader", type: "anyone" }
+  });
+}
+
 async function getConnectionStatus() {
   const auth = getOAuthClient();
   if (!auth || !getSetting("google_refresh_token")) {
@@ -191,5 +256,8 @@ module.exports = {
   uploadReportBundle,
   getConnectionStatus,
   buildReportDocument,
-  watermarkPhoto
+  watermarkPhoto,
+  startResumableUpload,
+  uploadResumableChunk,
+  shareDriveFile
 };
