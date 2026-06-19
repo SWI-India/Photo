@@ -48,7 +48,7 @@ async function findOrCreateFolder(drive, name, parentId) {
   return created.data.id;
 }
 
-async function ensureReportFolder(village, date) {
+async function ensureReportFolder(village, date, reportType) {
   const drive = requireDrive();
   let rootId = getSetting("drive_root_folder_id");
   if (!rootId) {
@@ -56,7 +56,8 @@ async function ensureReportFolder(village, date) {
     setSetting("drive_root_folder_id", rootId);
   }
   const villageId = await findOrCreateFolder(drive, village, rootId);
-  const dateId = await findOrCreateFolder(drive, date, villageId);
+  const dateFolderName = `${date} ${reportType || "General Visit"}`;
+  const dateId = await findOrCreateFolder(drive, dateFolderName, villageId);
   return { drive, folderId: dateId };
 }
 
@@ -71,6 +72,7 @@ async function buildReportDocument(report) {
         new Paragraph({ text: `Field person: ${report.personName}` }),
         new Paragraph({ text: `Village: ${report.villageName}` }),
         new Paragraph({ text: `Date: ${report.reportDate}` }),
+        new Paragraph({ text: `Report type: ${report.reportType || "General Visit"}` }),
         new Paragraph({ text: `Submitted: ${report.submittedAt}` }),
         new Paragraph({ text: `GPS location: ${location}` }),
         new Paragraph({ text: "Report", heading: HeadingLevel.HEADING_1 }),
@@ -97,7 +99,7 @@ async function watermarkPhoto(file, report) {
     ? `GPS: ${report.latitude.toFixed(6)}, ${report.longitude.toFixed(6)}`
     : "GPS: Not captured";
   const lines = [
-    `${report.villageName} | ${file.captureDate || report.submittedAt}`,
+    `${report.villageName} | ${report.reportType || "General Visit"} | ${file.captureDate || report.submittedAt}`,
     `${report.personName} | ${location}`
   ];
   const bannerHeight = padding * 2 + lineHeight * lines.length;
@@ -124,7 +126,7 @@ async function watermarkPhoto(file, report) {
 }
 
 async function uploadReportBundle(report, files) {
-  const { drive, folderId } = await ensureReportFolder(report.villageName, report.reportDate);
+  const { drive, folderId } = await ensureReportFolder(report.villageName, report.reportDate, report.reportType);
   const uploaded = [];
 
   for (const file of files) {
@@ -153,7 +155,7 @@ async function uploadReportBundle(report, files) {
 
   const documentBuffer = await buildReportDocument(report);
   const { Readable } = require("node:stream");
-  const documentName = `${report.reportDate} - ${report.personName} - Daily Report.docx`;
+  const documentName = `${report.reportDate} - ${report.reportType || "General Visit"} - ${report.personName} - Daily Report.docx`;
   const documentResponse = await drive.files.create({
     requestBody: { name: documentName, parents: [folderId] },
     media: {

@@ -34,6 +34,7 @@
           <span class="eyebrow">${escapeHtml(report.village_name)}</span>
           <h2>${escapeHtml(report.report_date)}</h2>
           <p><strong>Field person:</strong> ${escapeHtml(report.person_name)}</p>
+          <p><strong>Report type:</strong> ${escapeHtml(report.report_type || "General Visit")}</p>
           ${report.latitude != null ? `<p><strong>GPS:</strong> ${report.latitude}, ${report.longitude}</p>` : ""}
           <hr>
           <h3>Report</h3>

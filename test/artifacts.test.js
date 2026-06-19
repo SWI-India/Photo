@@ -9,6 +9,7 @@ const { buildReportDocument, watermarkPhoto } = require("../src/drive");
 const sampleReport = {
   personName: "Test User",
   villageName: "Test Village",
+  reportType: "Refill Visit",
   reportDate: "2026-06-18",
   submittedAt: "18 Jun 2026, 10:00 am",
   reportText: "Completed the scheduled village visit.",

@@ -43,6 +43,7 @@ db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id),
     village_id INTEGER NOT NULL REFERENCES villages(id),
     report_date TEXT NOT NULL,
+    report_type TEXT NOT NULL DEFAULT 'General Visit',
     report_text TEXT NOT NULL,
     latitude REAL,
     longitude REAL,
@@ -71,6 +72,11 @@ if (!villageColumns.some((column) => column.name === "share_token")) {
 for (const village of db.prepare("SELECT id FROM villages WHERE share_token IS NULL").all()) {
   db.prepare("UPDATE villages SET share_token = ? WHERE id = ?")
     .run(crypto.randomBytes(24).toString("hex"), village.id);
+}
+
+const reportColumns = db.pragma("table_info(reports)");
+if (!reportColumns.some((column) => column.name === "report_type")) {
+  db.exec("ALTER TABLE reports ADD COLUMN report_type TEXT NOT NULL DEFAULT 'General Visit'");
 }
 
 function getSetting(key) {

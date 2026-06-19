@@ -1,6 +1,6 @@
 const state = {
   token: localStorage.getItem("swiToken"),
-  user: null,
+  user: JSON.parse(localStorage.getItem("swiUser") || "null"),
   location: null,
   selectedFiles: [],
   shareContext: null
@@ -55,12 +55,22 @@ async function bootstrap() {
   if (!state.token) return showSignedOut();
   try {
     state.user = await api("/api/me");
+    localStorage.setItem("swiUser", JSON.stringify(state.user));
     showSignedIn();
-    await Promise.all([loadVillages(), loadReports()]);
+    await loadVillages();
+    if (navigator.onLine) await loadReports();
     restoreDraft();
     await flushQueue();
     if (state.user.role === "admin") await loadAdmin();
-  } catch {
+  } catch (error) {
+    if (!navigator.onLine && state.user) {
+      showSignedIn();
+      await loadVillages();
+      restoreDraft();
+      await updateConnection();
+      return;
+    }
+    console.warn("Unable to restore session:", error.message);
     logout();
   }
 }
@@ -69,6 +79,7 @@ function logout() {
   state.token = null;
   state.user = null;
   localStorage.removeItem("swiToken");
+  localStorage.removeItem("swiUser");
   showSignedOut();
 }
 
@@ -80,6 +91,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
     state.token = result.token;
     state.user = result.user;
     localStorage.setItem("swiToken", state.token);
+    localStorage.setItem("swiUser", JSON.stringify(state.user));
     showSignedIn();
     await Promise.all([loadVillages(), loadReports()]);
     if (state.user.role === "admin") await loadAdmin();
@@ -95,12 +107,19 @@ $$(".tabs button").forEach((button) => button.addEventListener("click", () => {
   ["new", "history", "admin"].forEach((view) => {
     $(`#${view}View`).classList.toggle("hidden", view !== button.dataset.view);
   });
-  if (button.dataset.view === "history") loadReports();
-  if (button.dataset.view === "admin") loadAdmin();
+  if (button.dataset.view === "history") loadReports().catch((error) => alert(error.message));
+  if (button.dataset.view === "admin") loadAdmin().catch((error) => alert(error.message));
 }));
 
 async function loadVillages() {
-  const villages = await api("/api/villages");
+  let villages;
+  try {
+    villages = await api("/api/villages");
+    localStorage.setItem("swiVillages", JSON.stringify(villages));
+  } catch (error) {
+    villages = JSON.parse(localStorage.getItem("swiVillages") || "[]");
+    if (!villages.length) throw error;
+  }
   $("#villageSelect").innerHTML = '<option value="">Select a village</option>' +
     villages.map((village) => `<option value="${village.id}">${escapeHtml(village.name)}</option>`).join("");
 }
@@ -111,11 +130,13 @@ $("#reportText").addEventListener("input", (event) => {
 });
 
 $("#villageSelect").addEventListener("change", saveDraft);
+$("#reportTypeSelect").addEventListener("change", saveDraft);
+$("#reportDate").addEventListener("change", saveDraft);
 
 function addSelectedFiles(files) {
   const combined = [...state.selectedFiles, ...files];
-  state.selectedFiles = combined.slice(0, 10);
-  if (combined.length > 10) alert("Only 10 files can be attached to one report.");
+  state.selectedFiles = combined.slice(0, 50);
+  if (combined.length > 50) alert("Only 50 files can be attached to one report.");
   renderMediaPreview();
 }
 
@@ -169,6 +190,7 @@ $("#reportForm").addEventListener("submit", async (event) => {
     const shareContext = {
       personName: state.user.name,
       villageName: $("#villageSelect").selectedOptions[0]?.textContent || "",
+      reportType: form.elements.reportType.value,
       reportDate: form.elements.date.value
     };
     const data = makeReportFormData(form);
@@ -188,6 +210,7 @@ function makeReportFormData(form, queued) {
   const data = new FormData();
   const values = queued || {
     villageId: form.elements.villageId.value,
+    reportType: form.elements.reportType.value,
     date: form.elements.date.value,
     report: form.elements.report.value,
     latitude: state.location?.latitude,
@@ -195,6 +218,7 @@ function makeReportFormData(form, queued) {
     files: state.selectedFiles
   };
   data.set("villageId", values.villageId);
+  data.set("reportType", values.reportType || "General Visit");
   data.set("date", values.date);
   data.set("report", values.report);
   if (values.latitude != null) data.set("latitude", values.latitude);
@@ -208,6 +232,7 @@ function resetReportForm(form) {
   form.reset();
   $("#personName").value = state.user.name;
   $("#reportDate").value = today();
+  $("#reportTypeSelect").value = "";
   $("#characterCount").textContent = "0 / 3,000";
   state.location = null;
   state.selectedFiles = [];
@@ -220,6 +245,8 @@ function resetReportForm(form) {
 function saveDraft() {
   localStorage.setItem("swiReportDraft", JSON.stringify({
     villageId: $("#villageSelect").value,
+    reportType: $("#reportTypeSelect").value,
+    date: $("#reportDate").value,
     report: $("#reportText").value,
     location: state.location
   }));
@@ -230,6 +257,8 @@ function restoreDraft() {
     const draft = JSON.parse(localStorage.getItem("swiReportDraft"));
     if (!draft) return;
     $("#villageSelect").value = draft.villageId || "";
+    $("#reportTypeSelect").value = draft.reportType || "";
+    $("#reportDate").value = draft.date || today();
     $("#reportText").value = draft.report || "";
     $("#characterCount").textContent = `${$("#reportText").value.length.toLocaleString()} / 3,000`;
     state.location = draft.location || null;
@@ -266,6 +295,7 @@ async function queueCurrentReport(form) {
     id: crypto.randomUUID(),
     createdAt: Date.now(),
     villageId: form.elements.villageId.value,
+    reportType: form.elements.reportType.value,
     date: form.elements.date.value,
     report: form.elements.report.value,
     latitude: state.location?.latitude,
@@ -295,17 +325,28 @@ async function flushQueue() {
 }
 
 async function loadReports() {
-  const reports = await api("/api/reports");
+  let reports;
+  try {
+    reports = await api("/api/reports");
+  } catch (error) {
+    if (!navigator.onLine) {
+      $("#reportList").innerHTML = "<p>Report history is unavailable offline. New reports can still be saved offline.</p>";
+      return;
+    }
+    throw error;
+  }
+
   $("#reportList").innerHTML = reports.length ? reports.map((report) => `
     <article class="list-item">
       <div>
         <strong>${escapeHtml(report.village_name)} · ${escapeHtml(report.report_date)}</strong>
-        <p>${escapeHtml(report.person_name)} · ${report.media_count} attachment${report.media_count === 1 ? "" : "s"}</p>
+        <p>${escapeHtml(report.report_type || "General Visit")} · ${escapeHtml(report.person_name)} · ${report.media_count} attachment${report.media_count === 1 ? "" : "s"}</p>
       </div>
       <button
         data-share="${escapeHtml(report.shareUrl)}"
         data-person="${escapeHtml(report.person_name)}"
         data-village="${escapeHtml(report.village_name)}"
+        data-type="${escapeHtml(report.report_type || "General Visit")}"
         data-date="${escapeHtml(report.report_date)}"
       >Share</button>
     </article>
@@ -313,6 +354,7 @@ async function loadReports() {
   $$("[data-share]").forEach((button) => button.addEventListener("click", () => openShare(button.dataset.share, {
     personName: button.dataset.person,
     villageName: button.dataset.village,
+    reportType: button.dataset.type,
     reportDate: button.dataset.date
   })));
 }
@@ -335,6 +377,7 @@ $("#whatsappButton").addEventListener("click", () => {
   const details = [
     context.personName ? `Field representative: ${context.personName}` : "",
     context.villageName ? `Village: ${context.villageName}` : "",
+    context.reportType ? `Report type: ${context.reportType}` : "",
     context.reportDate ? `Report date: ${context.reportDate}` : ""
   ].filter(Boolean).join("\n");
   const message = `SWI Daily Field Report\n${details ? `\n${details}\n` : ""}\nView the report, photos and videos:\n${url}`;

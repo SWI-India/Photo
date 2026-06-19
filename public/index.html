@@ -44,11 +44,19 @@
         <form id="reportForm">
           <div class="form-grid">
             <label>Field person<input id="personName" disabled></label>
-            <label>Date<input id="reportDate" name="date" type="date" readonly required></label>
+            <label>Date<input id="reportDate" name="date" type="date" required></label>
           </div>
           <label>Village
             <select id="villageSelect" name="villageId" required>
               <option value="">Select a village</option>
+            </select>
+          </label>
+          <label>Report type
+            <select id="reportTypeSelect" name="reportType" required>
+              <option value="">Select report type</option>
+              <option value="Refill Visit">Refill Visit</option>
+              <option value="General Visit">General Visit</option>
+              <option value="Monitoring Visit">Monitoring Visit</option>
             </select>
           </label>
           <label>Report
@@ -60,7 +68,7 @@
           </label>
           <label>Choose existing photos or videos
             <input id="mediaInput" type="file" accept="image/*,video/*" multiple>
-            <span class="field-note">Maximum 10 files, 100 MB each.</span>
+            <span class="field-note">Maximum 50 files, 100 MB each.</span>
           </label>
           <div id="mediaPreview" class="media-preview"></div>
           <button type="button" id="locationButton" class="secondary">Capture GPS location</button>

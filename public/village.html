@@ -36,6 +36,7 @@
               <article class="card">
                 <span class="eyebrow">${escapeHtml(report.report_date)}</span>
                 <h2>${escapeHtml(report.person_name)}</h2>
+                <p><strong>${escapeHtml(report.report_type || "General Visit")}</strong></p>
                 <p>${escapeHtml(report.report_text.slice(0, 240))}${report.report_text.length > 240 ? "…" : ""}</p>
                 <p class="field-note">${report.media_count} photo/video attachment${report.media_count === 1 ? "" : "s"}</p>
                 <p><a href="${escapeHtml(report.shareUrl)}">View complete report</a></p>

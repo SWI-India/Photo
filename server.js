@@ -15,11 +15,12 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const appUrl = process.env.APP_URL || `http://localhost:${port}`;
 const uploadDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), "swi-field-reports-uploads");
+const reportTypes = new Set(["Refill Visit", "General Visit", "Monitoring Visit"]);
 fs.mkdirSync(uploadDir, { recursive: true });
 
 const upload = multer({
   dest: uploadDir,
-  limits: { files: 10, fileSize: 100 * 1024 * 1024 },
+  limits: { files: 50, fileSize: 100 * 1024 * 1024 },
   fileFilter(req, file, callback) {
     const allowed = file.mimetype.startsWith("image/") || file.mimetype.startsWith("video/");
     callback(allowed ? null : new Error("Only photos and videos are allowed."), allowed);
@@ -68,7 +69,7 @@ app.get("/api/reports", authenticate, (req, res) => {
   const where = req.user.role === "admin" ? "" : "WHERE r.user_id = ?";
   const params = req.user.role === "admin" ? [] : [req.user.id];
   const reports = db.prepare(`
-    SELECT r.id, r.public_id, r.share_token, r.report_date, r.report_text, r.status,
+    SELECT r.id, r.public_id, r.share_token, r.report_date, r.report_type, r.report_text, r.status,
            r.created_at, v.name AS village_name, u.name AS person_name,
            (SELECT COUNT(*) FROM media m WHERE m.report_id = r.id) AS media_count
     FROM reports r
@@ -84,19 +85,23 @@ app.get("/api/reports", authenticate, (req, res) => {
   })));
 });
 
-app.post("/api/reports", authenticate, upload.array("media", 10), async (req, res, next) => {
+app.post("/api/reports", authenticate, upload.array("media", 50), async (req, res, next) => {
   const files = req.files || [];
   try {
     const villageId = Number(req.body.villageId);
+    const reportType = String(req.body.reportType || "").trim();
     const reportText = String(req.body.report || "").trim();
     const reportDate = String(req.body.date || "");
     if (!villageId || !/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) {
       return res.status(400).json({ error: "Village and report date are required." });
     }
+    if (!reportTypes.has(reportType)) {
+      return res.status(400).json({ error: "Please select a valid report type." });
+    }
     if (!reportText || reportText.length > 3000) {
       return res.status(400).json({ error: "Report must contain 1 to 3,000 characters." });
     }
-    if (files.length > 10) return res.status(400).json({ error: "Maximum 10 files allowed." });
+    if (files.length > 50) return res.status(400).json({ error: "Maximum 50 files allowed." });
 
     const village = db.prepare("SELECT id, name FROM villages WHERE id = ? AND active = 1").get(villageId);
     if (!village) return res.status(400).json({ error: "Please select an active village." });
@@ -109,6 +114,7 @@ app.post("/api/reports", authenticate, upload.array("media", 10), async (req, re
       personName: req.user.name,
       villageName: village.name,
       reportDate,
+      reportType,
       reportText,
       submittedAt: new Intl.DateTimeFormat("en-IN", {
         timeZone: "Asia/Kolkata",
@@ -139,10 +145,11 @@ app.post("/api/reports", authenticate, upload.array("media", 10), async (req, re
     const result = db.prepare(`
       INSERT INTO reports (
         public_id, share_token, user_id, village_id, report_date, report_text,
+        report_type,
         latitude, longitude, drive_folder_id, drive_document_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      publicId, shareToken, req.user.id, village.id, reportDate, reportText,
+      publicId, shareToken, req.user.id, village.id, reportDate, reportText, reportType,
       report.latitude, report.longitude, driveResult.folderId, driveResult.documentId
     );
     const insertMedia = db.prepare(`
@@ -166,7 +173,7 @@ app.post("/api/reports", authenticate, upload.array("media", 10), async (req, re
 
 app.get("/api/public/reports/:token", (req, res) => {
   const report = db.prepare(`
-    SELECT r.report_date, r.report_text, r.latitude, r.longitude, r.created_at,
+    SELECT r.report_date, r.report_type, r.report_text, r.latitude, r.longitude, r.created_at,
            v.name AS village_name, u.name AS person_name
     FROM reports r
     JOIN villages v ON v.id = r.village_id
@@ -196,7 +203,7 @@ app.get("/api/public/villages/:token", (req, res) => {
   ).get(req.params.token);
   if (!village) return res.status(404).json({ error: "Village link not found." });
   const reports = db.prepare(`
-    SELECT r.report_date, r.report_text, r.share_token, r.created_at,
+    SELECT r.report_date, r.report_type, r.report_text, r.share_token, r.created_at,
            u.name AS person_name,
            (SELECT COUNT(*) FROM media m WHERE m.report_id = r.id) AS media_count
     FROM reports r
@@ -338,7 +345,7 @@ app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     return res.status(400).json({ error: error.code === "LIMIT_FILE_SIZE"
       ? "Each file must be 100 MB or smaller."
-      : "Maximum 10 files are allowed." });
+      : "Maximum 50 files are allowed." });
   }
   res.status(error.code === "DRIVE_NOT_CONNECTED" ? 503 : 500).json({
     error: error.message || "Unexpected server error."
