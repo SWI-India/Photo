@@ -8,7 +8,7 @@ const express = require("express");
 const multer = require("multer");
 const bcrypt = require("bcryptjs");
 const { db, getSetting, setSetting } = require("./src/db");
-const { authenticate, requireAdmin, issueToken, seedAdmin } = require("./src/auth");
+const { authenticate, requireAdmin, requireSuperAdmin, issueToken, seedAdmin, adminRoles } = require("./src/auth");
 const {
   getOAuthClient,
   uploadReportBundle,
@@ -22,7 +22,8 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const appUrl = process.env.APP_URL || `http://localhost:${port}`;
 const uploadDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), "swi-field-reports-uploads");
-const reportTypes = new Set(["Refill Visit", "General Visit", "Monitoring Visit"]);
+const reportTypes = new Set(["Refill Visit", "General Visit", "Monitoring Visit", "Awareness Campaign"]);
+const userRoles = new Set(["super_admin", "admin", "ceo", "team_head", "field"]);
 const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES || 28 * 1024 * 1024);
 const maxChunkBytes = Number(process.env.MAX_CHUNK_BYTES || 2 * 1024 * 1024);
 const maxLargeUploadBytes = Number(process.env.MAX_LARGE_UPLOAD_BYTES || 2 * 1024 * 1024 * 1024);
@@ -86,8 +87,9 @@ app.get("/api/villages", authenticate, (req, res) => {
 });
 
 app.get("/api/reports", authenticate, (req, res) => {
-  const where = req.user.role === "admin" ? "" : "WHERE r.user_id = ?";
-  const params = req.user.role === "admin" ? [] : [req.user.id];
+  const hasAdminAccess = adminRoles.has(req.user.role);
+  const where = hasAdminAccess ? "" : "WHERE r.user_id = ?";
+  const params = hasAdminAccess ? [] : [req.user.id];
   const reports = db.prepare(`
     SELECT r.id, r.public_id, r.share_token, r.report_date, r.report_type, r.report_text, r.status,
            r.created_at, v.name AS village_name, u.name AS person_name,
@@ -204,7 +206,7 @@ app.post("/api/reports/:id/media/init", authenticate, async (req, res, next) => 
       FROM reports r
       WHERE r.id = ?
     `).get(Number(req.params.id));
-    if (!report || (req.user.role !== "admin" && report.user_id !== req.user.id)) {
+    if (!report || (!adminRoles.has(req.user.role) && report.user_id !== req.user.id)) {
       return res.status(404).json({ error: "Report not found." });
     }
     if (!report.drive_folder_id) {
@@ -246,7 +248,7 @@ app.post("/api/reports/:id/media/init", authenticate, async (req, res, next) => 
 app.put("/api/uploads/:id", authenticate, express.raw({ type: "*/*", limit: `${Math.ceil(maxChunkBytes / 1024 / 1024) + 1}mb` }), async (req, res, next) => {
   try {
     const session = db.prepare("SELECT * FROM upload_sessions WHERE id = ?").get(req.params.id);
-    if (!session || (req.user.role !== "admin" && session.user_id !== req.user.id)) {
+    if (!session || (!adminRoles.has(req.user.role) && session.user_id !== req.user.id)) {
       return res.status(404).json({ error: "Upload session not found." });
     }
     if (session.status === "complete") {
@@ -348,17 +350,17 @@ app.get("/api/public/villages/:token", (req, res) => {
   res.json({ village: village.name, reports });
 });
 
-app.get("/api/admin/users", authenticate, requireAdmin, (req, res) => {
+app.get("/api/admin/users", authenticate, requireSuperAdmin, (req, res) => {
   res.json(db.prepare(
     "SELECT id, name, email, role, active, created_at FROM users ORDER BY name"
   ).all());
 });
 
-app.post("/api/admin/users", authenticate, requireAdmin, async (req, res) => {
+app.post("/api/admin/users", authenticate, requireSuperAdmin, async (req, res) => {
   const name = String(req.body.name || "").trim();
   const email = String(req.body.email || "").trim().toLowerCase();
   const password = String(req.body.password || "");
-  const role = req.body.role === "admin" ? "admin" : "field";
+  const role = userRoles.has(req.body.role) ? req.body.role : "field";
   if (!name || !email.includes("@") || password.length < 8) {
     return res.status(400).json({ error: "Name, valid email and an 8-character password are required." });
   }
@@ -376,10 +378,37 @@ app.post("/api/admin/users", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-app.patch("/api/admin/users/:id", authenticate, requireAdmin, (req, res) => {
-  const active = req.body.active ? 1 : 0;
-  db.prepare("UPDATE users SET active = ? WHERE id = ?").run(active, Number(req.params.id));
+app.patch("/api/admin/users/:id", authenticate, requireSuperAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  const existing = db.prepare("SELECT id, role FROM users WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "User not found." });
+  const active = req.body.active == null ? undefined : req.body.active ? 1 : 0;
+  const role = userRoles.has(req.body.role) ? req.body.role : undefined;
+  if (id === req.user.id && active === 0) {
+    return res.status(400).json({ error: "You cannot deactivate your own Super Admin account." });
+  }
+  if (id === req.user.id && role && role !== "super_admin") {
+    return res.status(400).json({ error: "You cannot remove your own Super Admin role." });
+  }
+  if (active != null) db.prepare("UPDATE users SET active = ? WHERE id = ?").run(active, id);
+  if (role) db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, id);
   res.json({ ok: true });
+});
+
+app.delete("/api/admin/users/:id", authenticate, requireSuperAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (id === req.user.id) {
+    return res.status(400).json({ error: "You cannot delete your own Super Admin account." });
+  }
+  const existing = db.prepare("SELECT id FROM users WHERE id = ?").get(id);
+  if (!existing) return res.status(404).json({ error: "User not found." });
+  const reportCount = db.prepare("SELECT COUNT(*) AS count FROM reports WHERE user_id = ?").get(id).count;
+  if (reportCount) {
+    db.prepare("UPDATE users SET active = 0 WHERE id = ?").run(id);
+    return res.json({ ok: true, deactivated: true });
+  }
+  db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  res.json({ ok: true, deleted: true });
 });
 
 app.get("/api/admin/villages", authenticate, requireAdmin, (req, res) => {

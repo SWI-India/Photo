@@ -17,7 +17,7 @@ db.exec(`
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE COLLATE NOCASE,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'field' CHECK(role IN ('admin', 'field')),
+    role TEXT NOT NULL DEFAULT 'field' CHECK(role IN ('super_admin', 'admin', 'ceo', 'team_head', 'field')),
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -93,6 +93,31 @@ const reportColumns = db.pragma("table_info(reports)");
 if (!reportColumns.some((column) => column.name === "report_type")) {
   db.exec("ALTER TABLE reports ADD COLUMN report_type TEXT NOT NULL DEFAULT 'General Visit'");
 }
+
+const userTable = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'").get()?.sql || "";
+if (!userTable.includes("super_admin")) {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    CREATE TABLE users_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'field' CHECK(role IN ('super_admin', 'admin', 'ceo', 'team_head', 'field')),
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO users_new (id, name, email, password_hash, role, active, created_at)
+    SELECT id, name, email, password_hash, role, active, created_at FROM users;
+    DROP TABLE users;
+    ALTER TABLE users_new RENAME TO users;
+    PRAGMA foreign_keys = ON;
+  `);
+}
+
+const initialAdminEmail = (process.env.INITIAL_ADMIN_EMAIL || "sindhjirasoi@gmail.com").toLowerCase();
+db.prepare("UPDATE users SET role = 'super_admin' WHERE lower(email) = ? AND role = 'admin'")
+  .run(initialAdminEmail);
 
 function getSetting(key) {
   return db.prepare("SELECT value FROM settings WHERE key = ?").get(key)?.value ?? null;

@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const { db } = require("./db");
 
 const jwtSecret = process.env.JWT_SECRET || "development-only-change-me";
+const adminRoles = new Set(["super_admin", "admin", "ceo", "team_head"]);
 
 function issueToken(user) {
   return jwt.sign(
@@ -31,8 +32,15 @@ function authenticate(req, res, next) {
 }
 
 function requireAdmin(req, res, next) {
-  if (req.user.role !== "admin") {
+  if (!adminRoles.has(req.user.role)) {
     return res.status(403).json({ error: "Administrator access required." });
+  }
+  next();
+}
+
+function requireSuperAdmin(req, res, next) {
+  if (req.user.role !== "super_admin") {
+    return res.status(403).json({ error: "Super Admin access required." });
   }
   next();
 }
@@ -46,9 +54,9 @@ async function seedAdmin() {
   const hash = await bcrypt.hash(password, 12);
   db.prepare(`
     INSERT INTO users (name, email, password_hash, role)
-    VALUES (?, ?, ?, 'admin')
-  `).run("SWI Administrator", email, hash);
-  console.log(`Created initial administrator: ${email}`);
+    VALUES (?, ?, ?, 'super_admin')
+  `).run("SWI Super Admin", email, hash);
+  console.log(`Created initial super administrator: ${email}`);
 }
 
-module.exports = { authenticate, requireAdmin, issueToken, seedAdmin };
+module.exports = { authenticate, requireAdmin, requireSuperAdmin, issueToken, seedAdmin, adminRoles };

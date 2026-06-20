@@ -1,4 +1,4 @@
-const CACHE = "swi-reports-v8";
+const CACHE = "swi-reports-v9";
 const APP_SHELL = ["/", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

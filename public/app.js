@@ -3,7 +3,8 @@ const state = {
   user: JSON.parse(localStorage.getItem("swiUser") || "null"),
   location: null,
   selectedFiles: [],
-  shareContext: null
+  shareContext: null,
+  wakeLock: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -13,6 +14,17 @@ const DEFAULT_CHUNK_BYTES = 2 * 1024 * 1024;
 const MAX_CHUNK_RETRIES = 5;
 const MAX_PHOTO_EDGE = 1600;
 const PHOTO_QUALITY = 0.75;
+const ADMIN_ROLES = new Set(["super_admin", "admin", "ceo", "team_head"]);
+const ROLE_LABELS = {
+  super_admin: "Super Admin",
+  ceo: "CEO",
+  team_head: "Team Head",
+  admin: "Admin",
+  field: "Field team"
+};
+const ROLE_OPTIONS = Object.entries(ROLE_LABELS)
+  .map(([value, label]) => `<option value="${value}">${label}</option>`)
+  .join("");
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
@@ -47,7 +59,7 @@ function showSignedIn() {
   $("#logoutButton").classList.remove("hidden");
   $("#personName").value = state.user.name;
   $("#reportDate").value = today();
-  if (state.user.role === "admin") $("#adminTab").classList.remove("hidden");
+  $("#adminTab").classList.toggle("hidden", !ADMIN_ROLES.has(state.user.role));
 }
 
 function showSignedOut() {
@@ -66,7 +78,7 @@ async function bootstrap() {
     if (navigator.onLine) await loadReports();
     restoreDraft();
     await flushQueue();
-    if (state.user.role === "admin") await loadAdmin();
+    if (ADMIN_ROLES.has(state.user.role)) await loadAdmin();
   } catch (error) {
     if (!navigator.onLine && state.user) {
       showSignedIn();
@@ -99,7 +111,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
     localStorage.setItem("swiUser", JSON.stringify(state.user));
     showSignedIn();
     await Promise.all([loadVillages(), loadReports()]);
-    if (state.user.role === "admin") await loadAdmin();
+    if (ADMIN_ROLES.has(state.user.role)) await loadAdmin();
   } catch (error) {
     alert(error.message);
   }
@@ -257,6 +269,7 @@ $("#reportForm").addEventListener("submit", async (event) => {
       reportType: form.elements.reportType.value,
       reportDate: form.elements.date.value
     };
+    await requestUploadWakeLock();
     const result = await submitReportValues(reportValuesFromForm(form), (message) => ($("#formMessage").textContent = message));
     openShare(result.shareUrl, shareContext);
     resetReportForm(form);
@@ -264,6 +277,7 @@ $("#reportForm").addEventListener("submit", async (event) => {
   } catch (error) {
     $("#formMessage").textContent = error.message;
   } finally {
+    await releaseUploadWakeLock();
     button.disabled = false;
     button.textContent = "Submit report";
   }
@@ -332,6 +346,23 @@ async function submitReportValues(values, onProgress = () => {}) {
     await uploadLargeFile(result.id, chunkedFiles[index], index + 1, chunkedFiles.length, onProgress);
   }
   return result;
+}
+
+async function requestUploadWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    state.wakeLock = await navigator.wakeLock.request("screen");
+  } catch (error) {
+    console.warn("Screen wake lock unavailable:", error.message);
+  }
+}
+
+async function releaseUploadWakeLock() {
+  if (!state.wakeLock) return;
+  try {
+    await state.wakeLock.release();
+  } catch {}
+  state.wakeLock = null;
 }
 
 async function uploadLargeFile(reportId, file, number, totalFiles, onProgress) {
@@ -482,17 +513,22 @@ async function getQueuedReports() {
 async function flushQueue() {
   if (!navigator.onLine || !state.token) return;
   const queued = await getQueuedReports();
-  for (const report of queued.sort((a, b) => a.createdAt - b.createdAt)) {
-    try {
-      await submitReportValues(report);
-      await queueOperation("readwrite", (store) => store.delete(report.id));
-    } catch (error) {
-      console.warn("Queued report remains pending:", error.message);
-      break;
+  if (queued.length) await requestUploadWakeLock();
+  try {
+    for (const report of queued.sort((a, b) => a.createdAt - b.createdAt)) {
+      try {
+        await submitReportValues(report);
+        await queueOperation("readwrite", (store) => store.delete(report.id));
+      } catch (error) {
+        console.warn("Queued report remains pending:", error.message);
+        break;
+      }
     }
+    if (queued.length) await loadReports();
+    await updateConnection();
+  } finally {
+    await releaseUploadWakeLock();
   }
-  if (queued.length) await loadReports();
-  await updateConnection();
 }
 
 async function loadReports() {
@@ -556,7 +592,10 @@ $("#whatsappButton").addEventListener("click", () => {
 });
 
 async function loadAdmin() {
-  await Promise.all([loadGoogleStatus(), loadAdminVillages(), loadAdminUsers()]);
+  $("#teamUsersCard").classList.toggle("hidden", state.user.role !== "super_admin");
+  const tasks = [loadGoogleStatus()];
+  if (state.user.role === "super_admin") tasks.push(loadAdminUsers());
+  await Promise.all(tasks);
 }
 
 async function loadGoogleStatus() {
@@ -583,26 +622,7 @@ $("#disconnectGoogleButton").addEventListener("click", async () => {
 });
 
 async function loadAdminVillages() {
-  const villages = await api("/api/admin/villages");
-  $("#adminVillageList").innerHTML = villages.map((village) => `
-    <div class="list-item">
-      <div><strong>${escapeHtml(village.name)}</strong><p>Village photo and report link</p></div>
-      <div class="item-actions">
-        <button class="secondary" data-village-share="${escapeHtml(village.shareUrl)}">Share</button>
-        <button class="${village.active ? "danger" : "secondary"}" data-village-id="${village.id}" data-active="${village.active ? "0" : "1"}">
-          ${village.active ? "Disable" : "Enable"}
-        </button>
-      </div>
-    </div>
-  `).join("");
-  $$("[data-village-share]").forEach((button) => button.addEventListener("click", () => openShare(button.dataset.villageShare)));
-  $$("[data-village-id]").forEach((button) => button.addEventListener("click", async () => {
-    await api(`/api/admin/villages/${button.dataset.villageId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ active: button.dataset.active === "1" })
-    });
-    await Promise.all([loadAdminVillages(), loadVillages()]);
-  }));
+  $("#villageMessage").textContent = "";
 }
 
 $("#villageForm").addEventListener("submit", async (event) => {
@@ -612,7 +632,9 @@ $("#villageForm").addEventListener("submit", async (event) => {
   try {
     await api("/api/admin/villages", { method: "POST", body: JSON.stringify(data) });
     form.reset();
-    await Promise.all([loadAdminVillages(), loadVillages()]);
+    $("#villageMessage").textContent = "Village added.";
+    $("#villageMessage").classList.add("success");
+    await loadVillages();
   } catch (error) { alert(error.message); }
 });
 
@@ -631,6 +653,46 @@ async function loadAdminUsers() {
       method: "PATCH",
       body: JSON.stringify({ active: button.dataset.active === "1" })
     });
+    await loadAdminUsers();
+  }));
+}
+
+async function loadAdminUsers() {
+  const users = await api("/api/admin/users");
+  $("#adminUserList").innerHTML = users.map((user) => `
+    <div class="list-item">
+      <div>
+        <strong>${escapeHtml(user.name)}</strong>
+        <p>${escapeHtml(user.email)} · ${escapeHtml(ROLE_LABELS[user.role] || user.role)} · ${user.active ? "Active" : "Inactive"}</p>
+      </div>
+      <div class="item-actions">
+        <select data-user-role="${user.id}">
+          ${ROLE_OPTIONS.replace(`value="${user.role}"`, `value="${user.role}" selected`)}
+        </select>
+        <button class="${user.active ? "danger" : "secondary"}" data-user-active-id="${user.id}" data-active="${user.active ? "0" : "1"}">
+          ${user.active ? "Disable" : "Enable"}
+        </button>
+        <button class="danger" data-user-delete-id="${user.id}">Delete</button>
+      </div>
+    </div>
+  `).join("");
+  $$("[data-user-role]").forEach((select) => select.addEventListener("change", async () => {
+    await api(`/api/admin/users/${select.dataset.userRole}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role: select.value })
+    });
+    await loadAdminUsers();
+  }));
+  $$("[data-user-active-id]").forEach((button) => button.addEventListener("click", async () => {
+    await api(`/api/admin/users/${button.dataset.userActiveId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: button.dataset.active === "1" })
+    });
+    await loadAdminUsers();
+  }));
+  $$("[data-user-delete-id]").forEach((button) => button.addEventListener("click", async () => {
+    if (!confirm("Delete this team member? If they have submitted reports, the account will be deactivated to keep old reports safe.")) return;
+    await api(`/api/admin/users/${button.dataset.userDeleteId}`, { method: "DELETE" });
     await loadAdminUsers();
   }));
 }
@@ -678,6 +740,11 @@ async function updateConnection() {
 }
 window.addEventListener("online", () => flushQueue());
 window.addEventListener("offline", updateConnection);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && state.wakeLock?.released) {
+    requestUploadWakeLock();
+  }
+});
 updateConnection();
 
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/service-worker.js");
