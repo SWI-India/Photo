@@ -9,7 +9,8 @@ const state = {
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const MAX_UPLOAD_BYTES = 28 * 1024 * 1024;
-const DEFAULT_CHUNK_BYTES = 8 * 1024 * 1024;
+const DEFAULT_CHUNK_BYTES = 2 * 1024 * 1024;
+const MAX_CHUNK_RETRIES = 5;
 const MAX_PHOTO_EDGE = 1600;
 const PHOTO_QUALITY = 0.75;
 
@@ -348,22 +349,54 @@ async function uploadLargeFile(reportId, file, number, totalFiles, onProgress) {
   while (offset < file.size) {
     const end = Math.min(offset + chunkSize, file.size) - 1;
     const chunk = file.slice(offset, end + 1);
-    const response = await fetch(`/api/uploads/${init.uploadId}`, {
-      method: "PUT",
-      headers: {
-        Authorization: `Bearer ${state.token}`,
-        "Content-Type": "application/octet-stream",
-        "Content-Range": `bytes ${offset}-${end}/${file.size}`
-      },
-      body: chunk
+    const payload = await uploadChunkWithRetry(init.uploadId, chunk, offset, end, file.size, (attempt) => {
+      onProgress(`Network issue. Retrying ${file.name} part ${attempt}/${MAX_CHUNK_RETRIES}...`);
     });
-    const text = await response.text();
-    const payload = text ? JSON.parse(text) : {};
-    if (!response.ok) throw new Error(payload.error || `Upload failed with status ${response.status}`);
     offset = payload.uploadedBytes || end + 1;
     const percent = Math.min(100, Math.round((offset / file.size) * 100));
     onProgress(`Uploading large file ${number}/${totalFiles}: ${file.name} (${percent}%)`);
   }
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function uploadChunkWithRetry(uploadId, chunk, start, end, total, onRetry) {
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`/api/uploads/${uploadId}`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${state.token}`,
+          "Content-Type": "application/octet-stream",
+          "Content-Range": `bytes ${start}-${end}/${total}`
+        },
+        body: chunk
+      });
+      const text = await response.text();
+      let payload = {};
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        payload = { error: text.slice(0, 250) };
+      }
+      if (!response.ok) {
+        const error = new Error(payload.error || `Upload failed with status ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      return payload;
+    } catch (error) {
+      lastError = error;
+      if (error.status && error.status < 500 && error.status !== 408 && error.status !== 429) throw error;
+      if (attempt === MAX_CHUNK_RETRIES) break;
+      onRetry(attempt + 1);
+      await wait(1200 * attempt);
+    }
+  }
+  throw new Error(`Network problem while uploading video. Please keep the app open and retry. Last error: ${lastError?.message || "upload failed"}`);
 }
 
 function resetReportForm(form) {

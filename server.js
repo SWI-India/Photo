@@ -24,7 +24,7 @@ const appUrl = process.env.APP_URL || `http://localhost:${port}`;
 const uploadDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), "swi-field-reports-uploads");
 const reportTypes = new Set(["Refill Visit", "General Visit", "Monitoring Visit"]);
 const maxUploadBytes = Number(process.env.MAX_UPLOAD_BYTES || 28 * 1024 * 1024);
-const maxChunkBytes = Number(process.env.MAX_CHUNK_BYTES || 8 * 1024 * 1024);
+const maxChunkBytes = Number(process.env.MAX_CHUNK_BYTES || 2 * 1024 * 1024);
 const maxLargeUploadBytes = Number(process.env.MAX_LARGE_UPLOAD_BYTES || 2 * 1024 * 1024 * 1024);
 fs.mkdirSync(uploadDir, { recursive: true });
 
