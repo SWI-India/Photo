@@ -344,14 +344,20 @@ app.get("/api/public/media/:id", async (req, res, next) => {
     if (!media) return res.status(404).send("Media not found.");
 
     const driveResponse = await getDriveFileStream(media.drive_file_id, req.headers.range);
-    res.status(driveResponse.status || 200);
-    for (const [key, value] of Object.entries(driveResponse.headers || {})) {
+    const responseHeaders = driveResponse.headers || {};
+    const statusCode = req.headers.range && responseHeaders["content-range"]
+      ? 206
+      : driveResponse.status || 200;
+    res.status(statusCode);
+    for (const [key, value] of Object.entries(responseHeaders)) {
       if (["content-length", "content-range", "accept-ranges"].includes(key.toLowerCase())) {
         res.setHeader(key, value);
       }
     }
+    res.setHeader("Accept-Ranges", "bytes");
+    res.setHeader("Cache-Control", "private, max-age=300");
     res.setHeader("Content-Type", media.mime_type);
-    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(media.original_name)}"`);
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(media.original_name)}"; filename*=UTF-8''${encodeURIComponent(media.original_name)}`);
     driveResponse.data.on("error", next);
     driveResponse.data.pipe(res);
   } catch (error) {

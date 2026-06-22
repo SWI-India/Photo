@@ -52,7 +52,7 @@
       const source = file.media_url || file.public_url;
       document.querySelector("#galleryStage").innerHTML = file.mime_type.startsWith("image/")
         ? `<img src="${escapeHtml(source)}" alt="${escapeHtml(file.original_name)}">`
-        : `<video src="${escapeHtml(source)}" controls autoplay playsinline></video>`;
+        : `<div class="video-viewer"><video controls playsinline preload="metadata"><source src="${escapeHtml(source)}" type="${escapeHtml(file.mime_type)}"></video><a href="${escapeHtml(source)}" target="_blank" rel="noopener">Open video separately</a></div>`;
       document.querySelector("#galleryCaption").textContent =
         `${activeMediaIndex + 1} / ${reportMedia.length} - ${file.original_name}`;
     }
@@ -68,7 +68,7 @@
           const source = file.media_url || file.public_url;
           const view = file.mime_type.startsWith("image/")
             ? `<img src="${escapeHtml(file.thumbnail_url || source)}" alt="${escapeHtml(file.original_name)}">`
-            : `<video src="${escapeHtml(source)}" muted playsinline></video>`;
+            : `<div class="video-tile"><span>▶</span><small>Video</small></div>`;
           return `<button class="media-chip media-open" data-index="${index}">${view}<span>${escapeHtml(file.original_name)}</span></button>`;
         }).join("");
         document.querySelector("#report").innerHTML = `
