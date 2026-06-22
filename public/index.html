@@ -22,7 +22,7 @@
   </header>
 
   <main>
-    <section id="loginView" class="card narrow">
+    <section id="loginView" class="card narrow login-card">
       <h2>Welcome back</h2>
       <p>Sign in to submit your village report.</p>
       <form id="loginForm">
@@ -47,7 +47,7 @@
         <button data-view="admin" id="adminTab" class="hidden">Admin</button>
       </nav>
 
-      <section id="newView" class="card">
+      <section id="newView" class="card report-card">
         <div class="section-heading">
           <div><span class="eyebrow">Daily submission</span><h2>New field report</h2></div>
           <span id="connectionBadge" class="badge">Online</span>
@@ -96,7 +96,7 @@
       </section>
 
       <section id="adminView" class="hidden">
-        <div class="card">
+        <div class="card admin-card">
           <span class="eyebrow">Storage</span><h2>Google Drive connection</h2>
           <p id="googleStatus">Checking connection…</p>
           <button id="connectGoogleButton">Connect or change Google account</button>
@@ -105,7 +105,7 @@
         </div>
 
         <div class="admin-grid">
-          <section class="card">
+          <section class="card admin-card">
             <span class="eyebrow">Configuration</span><h2>Villages</h2>
             <form id="villageForm" class="inline-form">
               <input name="name" placeholder="Village name" required>
@@ -114,7 +114,7 @@
             <p id="villageMessage" class="message" aria-live="polite"></p>
           </section>
 
-          <section class="card" id="teamUsersCard">
+          <section class="card admin-card" id="teamUsersCard">
             <span class="eyebrow">Access</span><h2>Team users</h2>
             <form id="userForm">
               <label>Name<input name="name" required></label>
