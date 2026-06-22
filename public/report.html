@@ -52,17 +52,24 @@
       const source = file.media_url || file.public_url;
       const download = file.download_url || source;
       const preview = file.drive_preview_url
-        ? `<a class="video-action" href="${escapeHtml(file.drive_preview_url)}" target="_blank" rel="noopener">Preview in Google Drive</a>`
+        ? `<iframe class="video-frame" src="${escapeHtml(file.drive_preview_url)}" title="${escapeHtml(file.original_name)}" allow="autoplay; fullscreen" allowfullscreen></iframe>`
+        : "";
+      const previewAction = file.drive_preview_url
+        ? `<a class="video-action" href="${escapeHtml(file.drive_preview_url)}" target="_blank" rel="noopener">Open preview separately</a>`
         : "";
       document.querySelector("#galleryStage").innerHTML = file.mime_type.startsWith("image/")
         ? `<img src="${escapeHtml(source)}" alt="${escapeHtml(file.original_name)}">`
         : `<div class="video-viewer">
-            <video controls playsinline preload="metadata" onerror="this.closest('.video-viewer').classList.add('video-error')">
-              <source src="${escapeHtml(source)}" type="${escapeHtml(file.mime_type)}">
-            </video>
-            <p class="video-help">This phone cannot play the original video format inside the app. Use preview or download below.</p>
+            ${preview || `<video controls playsinline preload="metadata" onerror="this.closest('.video-viewer').classList.add('video-error')"><source src="${escapeHtml(source)}" type="${escapeHtml(file.mime_type)}"></video>`}
+            <details class="native-video-fallback">
+              <summary>Try phone video player</summary>
+              <video controls playsinline preload="metadata" onerror="this.closest('.video-viewer').classList.add('video-error')">
+                <source src="${escapeHtml(source)}" type="${escapeHtml(file.mime_type)}">
+              </video>
+            </details>
+            <p class="video-help">If the video still does not play, the phone/browser may not support this video format. Use download below.</p>
             <div class="video-actions">
-              ${preview}
+              ${previewAction}
               <a class="video-action" href="${escapeHtml(download)}" target="_blank" rel="noopener">Open or download video</a>
             </div>
           </div>`;
