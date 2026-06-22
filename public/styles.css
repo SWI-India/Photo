@@ -45,19 +45,20 @@ button.text-button { background: transparent; color: var(--green); padding-inlin
 .hidden { display: none !important; }
 
 .app-header {
-  min-height: 104px;
+  min-height: 136px;
   padding: 1rem max(1.25rem, calc((100vw - 1050px) / 2));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: white;
-  background: linear-gradient(135deg, rgba(23, 58, 43, .98), rgba(40, 89, 67, .94));
-  box-shadow: 0 18px 48px rgba(23, 58, 43, .18);
+  color: var(--green-dark);
+  background: white;
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 14px 38px rgba(33, 54, 43, .12);
 }
 .app-header h1 { margin: .05rem 0 0; font-size: clamp(1.45rem, 4vw, 2.1rem); }
 .brand-lockup { display: flex; align-items: center; gap: .85rem; }
-.brand-lockup img { width: clamp(170px, 22vw, 230px); height: 76px; object-fit: contain; border-radius: 0; background: white; padding: .45rem .65rem; box-shadow: 0 12px 32px rgba(0,0,0,.16); }
-.app-header .eyebrow { color: #bfe9f8; }
+.brand-lockup img { width: clamp(212px, 27vw, 288px); height: 98px; object-fit: contain; border-radius: 0; background: white; padding: .45rem .65rem; box-shadow: none; }
+.app-header .eyebrow { color: var(--orange); }
 .eyebrow { color: var(--orange); font-size: .74rem; font-weight: 900; letter-spacing: .14em; text-transform: uppercase; }
 main { width: min(1050px, calc(100% - 2rem)); margin: 0 auto 5rem; }
 .card {
@@ -131,9 +132,9 @@ textarea { resize: vertical; min-height: 150px; }
 
 @media (max-width: 680px) {
   .form-grid, .admin-grid { grid-template-columns: 1fr; }
-  .app-header { min-height: 76px; }
+  .app-header { min-height: 96px; }
   .brand-lockup { gap: .65rem; }
-  .brand-lockup img { width: 148px; height: 58px; padding: .35rem .45rem; }
+  .brand-lockup img { width: 185px; height: 74px; padding: .35rem .45rem; }
   .app-header h1 { font-size: 1.35rem; }
   main { width: min(100% - 1rem, 1050px); }
   .card { border-radius: 17px; padding: 1rem; }
