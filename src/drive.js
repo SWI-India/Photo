@@ -237,6 +237,14 @@ async function shareDriveFile(fileId) {
   });
 }
 
+async function getDriveFileStream(fileId, range) {
+  const drive = requireDrive();
+  return drive.files.get(
+    { fileId, alt: "media" },
+    { responseType: "stream", headers: range ? { Range: range } : undefined }
+  );
+}
+
 async function getConnectionStatus() {
   const auth = getOAuthClient();
   if (!auth || !getSetting("google_refresh_token")) {
@@ -259,5 +267,6 @@ module.exports = {
   watermarkPhoto,
   startResumableUpload,
   uploadResumableChunk,
-  shareDriveFile
+  shareDriveFile,
+  getDriveFileStream
 };

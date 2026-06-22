@@ -15,7 +15,8 @@ const {
   getConnectionStatus,
   startResumableUpload,
   uploadResumableChunk,
-  shareDriveFile
+  shareDriveFile,
+  getDriveFileStream
 } = require("./src/drive");
 
 const app = express();
@@ -315,7 +316,7 @@ app.get("/api/public/reports/:token", (req, res) => {
   `).get(req.params.token);
   if (!report) return res.status(404).json({ error: "Report not found or link disabled." });
   report.media = db.prepare(`
-    SELECT original_name, mime_type, public_url, drive_file_id
+    SELECT id, original_name, mime_type, public_url, drive_file_id
     FROM media
     WHERE report_id = (
       SELECT id FROM reports WHERE share_token = ?
@@ -323,11 +324,39 @@ app.get("/api/public/reports/:token", (req, res) => {
     ORDER BY id
   `).all(req.params.token).map((item) => ({
     ...item,
+    media_url: `${appUrl}/api/public/media/${item.id}?token=${encodeURIComponent(req.params.token)}`,
     thumbnail_url: item.mime_type.startsWith("image/")
-      ? `https://drive.google.com/thumbnail?id=${encodeURIComponent(item.drive_file_id)}&sz=w1600`
+      ? `${appUrl}/api/public/media/${item.id}?token=${encodeURIComponent(req.params.token)}`
       : null
   }));
   res.json(report);
+});
+
+app.get("/api/public/media/:id", async (req, res, next) => {
+  try {
+    const token = String(req.query.token || "");
+    const media = db.prepare(`
+      SELECT m.original_name, m.mime_type, m.drive_file_id
+      FROM media m
+      JOIN reports r ON r.id = m.report_id
+      WHERE m.id = ? AND r.share_token = ? AND r.status = 'submitted'
+    `).get(Number(req.params.id), token);
+    if (!media) return res.status(404).send("Media not found.");
+
+    const driveResponse = await getDriveFileStream(media.drive_file_id, req.headers.range);
+    res.status(driveResponse.status || 200);
+    for (const [key, value] of Object.entries(driveResponse.headers || {})) {
+      if (["content-length", "content-range", "accept-ranges"].includes(key.toLowerCase())) {
+        res.setHeader(key, value);
+      }
+    }
+    res.setHeader("Content-Type", media.mime_type);
+    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(media.original_name)}"`);
+    driveResponse.data.on("error", next);
+    driveResponse.data.pipe(res);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/public/villages/:token", (req, res) => {

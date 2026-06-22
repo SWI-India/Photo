@@ -4,7 +4,8 @@ const state = {
   location: null,
   selectedFiles: [],
   shareContext: null,
-  wakeLock: null
+  wakeLock: null,
+  installPrompt: null
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -60,12 +61,14 @@ function showSignedIn() {
   $("#personName").value = state.user.name;
   $("#reportDate").value = today();
   $("#adminTab").classList.toggle("hidden", !ADMIN_ROLES.has(state.user.role));
+  updateInstallPrompt();
 }
 
 function showSignedOut() {
   $("#loginView").classList.remove("hidden");
   $("#appView").classList.add("hidden");
   $("#logoutButton").classList.add("hidden");
+  $("#installPrompt").classList.add("hidden");
 }
 
 async function bootstrap() {
@@ -118,6 +121,33 @@ $("#loginForm").addEventListener("submit", async (event) => {
 });
 
 $("#logoutButton").addEventListener("click", logout);
+
+function updateInstallPrompt() {
+  const isStandalone = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  $("#installPrompt").classList.toggle("hidden", !state.user || isStandalone);
+}
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  state.installPrompt = event;
+  updateInstallPrompt();
+});
+
+$("#installButton").addEventListener("click", async () => {
+  if (!state.installPrompt) {
+    alert("To install: open your browser menu and choose 'Add to Home screen' or 'Install app'. On iPhone, use Share > Add to Home Screen.");
+    return;
+  }
+  state.installPrompt.prompt();
+  await state.installPrompt.userChoice;
+  state.installPrompt = null;
+  updateInstallPrompt();
+});
+
+window.addEventListener("appinstalled", () => {
+  state.installPrompt = null;
+  updateInstallPrompt();
+});
 
 $$(".tabs button").forEach((button) => button.addEventListener("click", () => {
   $$(".tabs button").forEach((item) => item.classList.toggle("active", item === button));

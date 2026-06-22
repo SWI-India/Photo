@@ -12,11 +12,45 @@
   <main>
     <article id="report" class="card"><p>Loading report…</p></article>
   </main>
+  <div id="galleryDialog" class="gallery-dialog hidden" role="dialog" aria-modal="true">
+    <button id="galleryClose" class="gallery-close" aria-label="Close viewer">Close</button>
+    <button id="galleryPrev" class="gallery-nav gallery-prev" aria-label="Previous media">‹</button>
+    <div id="galleryStage" class="gallery-stage"></div>
+    <button id="galleryNext" class="gallery-nav gallery-next" aria-label="Next media">›</button>
+    <div id="galleryCaption" class="gallery-caption"></div>
+  </div>
   <script>
     const token = location.pathname.split("/").pop();
+    let reportMedia = [];
+    let activeMediaIndex = 0;
+    let touchStartX = 0;
     const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
     })[c]);
+    function openGallery(index) {
+      activeMediaIndex = index;
+      renderGalleryItem();
+      document.querySelector("#galleryDialog").classList.remove("hidden");
+    }
+    function closeGallery() {
+      const video = document.querySelector("#galleryStage video");
+      if (video) video.pause();
+      document.querySelector("#galleryDialog").classList.add("hidden");
+    }
+    function moveGallery(step) {
+      if (!reportMedia.length) return;
+      activeMediaIndex = (activeMediaIndex + step + reportMedia.length) % reportMedia.length;
+      renderGalleryItem();
+    }
+    function renderGalleryItem() {
+      const file = reportMedia[activeMediaIndex];
+      const source = file.media_url || file.public_url;
+      document.querySelector("#galleryStage").innerHTML = file.mime_type.startsWith("image/")
+        ? `<img src="${escapeHtml(source)}" alt="${escapeHtml(file.original_name)}">`
+        : `<video src="${escapeHtml(source)}" controls autoplay playsinline></video>`;
+      document.querySelector("#galleryCaption").textContent =
+        `${activeMediaIndex + 1} / ${reportMedia.length} - ${file.original_name}`;
+    }
     fetch(`/api/public/reports/${token}`)
       .then(async (response) => {
         const data = await response.json();
@@ -24,11 +58,13 @@
         return data;
       })
       .then((report) => {
-        const media = report.media.map((file) => {
+        reportMedia = report.media || [];
+        const media = reportMedia.map((file, index) => {
+          const source = file.media_url || file.public_url;
           const view = file.mime_type.startsWith("image/")
-            ? `<a href="${escapeHtml(file.public_url)}" target="_blank" rel="noopener"><img src="${escapeHtml(file.thumbnail_url)}" alt="${escapeHtml(file.original_name)}"></a>`
-            : `<a href="${escapeHtml(file.public_url)}" target="_blank" rel="noopener">Open video: ${escapeHtml(file.original_name)}</a>`;
-          return `<div class="media-chip">${view}</div>`;
+            ? `<img src="${escapeHtml(file.thumbnail_url || source)}" alt="${escapeHtml(file.original_name)}">`
+            : `<video src="${escapeHtml(source)}" muted playsinline></video>`;
+          return `<button class="media-chip media-open" data-index="${index}">${view}<span>${escapeHtml(file.original_name)}</span></button>`;
         }).join("");
         document.querySelector("#report").innerHTML = `
           <span class="eyebrow">${escapeHtml(report.village_name)}</span>
@@ -41,10 +77,29 @@
           <p style="white-space:pre-wrap">${escapeHtml(report.report_text)}</p>
           ${media ? `<h3>Photos and videos</h3><div class="media-preview">${media}</div>` : ""}
         `;
+        document.querySelectorAll("[data-index]").forEach((button) => {
+          button.addEventListener("click", () => openGallery(Number(button.dataset.index)));
+        });
       })
       .catch((error) => {
         document.querySelector("#report").innerHTML = `<h2>Report unavailable</h2><p>${escapeHtml(error.message)}</p>`;
       });
+    document.querySelector("#galleryClose").addEventListener("click", closeGallery);
+    document.querySelector("#galleryPrev").addEventListener("click", () => moveGallery(-1));
+    document.querySelector("#galleryNext").addEventListener("click", () => moveGallery(1));
+    document.querySelector("#galleryDialog").addEventListener("touchstart", (event) => {
+      touchStartX = event.changedTouches[0].screenX;
+    }, { passive: true });
+    document.querySelector("#galleryDialog").addEventListener("touchend", (event) => {
+      const delta = event.changedTouches[0].screenX - touchStartX;
+      if (Math.abs(delta) > 45) moveGallery(delta > 0 ? -1 : 1);
+    }, { passive: true });
+    document.addEventListener("keydown", (event) => {
+      if (document.querySelector("#galleryDialog").classList.contains("hidden")) return;
+      if (event.key === "Escape") closeGallery();
+      if (event.key === "ArrowLeft") moveGallery(-1);
+      if (event.key === "ArrowRight") moveGallery(1);
+    });
   </script>
 </body>
 </html>
