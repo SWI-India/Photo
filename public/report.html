@@ -50,9 +50,22 @@
     function renderGalleryItem() {
       const file = reportMedia[activeMediaIndex];
       const source = file.media_url || file.public_url;
+      const download = file.download_url || source;
+      const preview = file.drive_preview_url
+        ? `<a class="video-action" href="${escapeHtml(file.drive_preview_url)}" target="_blank" rel="noopener">Preview in Google Drive</a>`
+        : "";
       document.querySelector("#galleryStage").innerHTML = file.mime_type.startsWith("image/")
         ? `<img src="${escapeHtml(source)}" alt="${escapeHtml(file.original_name)}">`
-        : `<div class="video-viewer"><video controls playsinline preload="metadata"><source src="${escapeHtml(source)}" type="${escapeHtml(file.mime_type)}"></video><a href="${escapeHtml(source)}" target="_blank" rel="noopener">Open video separately</a></div>`;
+        : `<div class="video-viewer">
+            <video controls playsinline preload="metadata" onerror="this.closest('.video-viewer').classList.add('video-error')">
+              <source src="${escapeHtml(source)}" type="${escapeHtml(file.mime_type)}">
+            </video>
+            <p class="video-help">This phone cannot play the original video format inside the app. Use preview or download below.</p>
+            <div class="video-actions">
+              ${preview}
+              <a class="video-action" href="${escapeHtml(download)}" target="_blank" rel="noopener">Open or download video</a>
+            </div>
+          </div>`;
       document.querySelector("#galleryCaption").textContent =
         `${activeMediaIndex + 1} / ${reportMedia.length} - ${file.original_name}`;
     }

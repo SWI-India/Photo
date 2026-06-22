@@ -39,6 +39,29 @@ const upload = multer({
   }
 });
 
+function publicMediaUrl(mediaId, token, options = {}) {
+  const url = new URL(`${appUrl}/api/public/media/${mediaId}`);
+  url.searchParams.set("token", token);
+  if (options.download) url.searchParams.set("download", "1");
+  return url.toString();
+}
+
+function drivePreviewUrl(fileId) {
+  return `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/preview`;
+}
+
+function browserMediaType(mimeType, originalName = "") {
+  const normalized = String(mimeType || "").toLowerCase();
+  const extension = path.extname(originalName).toLowerCase();
+  if (extension === ".mp4" || extension === ".m4v") return "video/mp4";
+  if (extension === ".webm") return "video/webm";
+  if (extension === ".mov" || extension === ".qt") return "video/quicktime";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  if (extension === ".png") return "image/png";
+  if (extension === ".webp") return "image/webp";
+  return normalized || "application/octet-stream";
+}
+
 function rejectLargeUpload(req, res, next) {
   const contentLength = Number(req.headers["content-length"] || 0);
   if (contentLength > maxUploadBytes) {
@@ -322,17 +345,22 @@ app.get("/api/public/reports/:token", (req, res) => {
       SELECT id FROM reports WHERE share_token = ?
     )
     ORDER BY id
-  `).all(req.params.token).map((item) => ({
-    ...item,
-    media_url: `${appUrl}/api/public/media/${item.id}?token=${encodeURIComponent(req.params.token)}`,
-    thumbnail_url: item.mime_type.startsWith("image/")
-      ? `${appUrl}/api/public/media/${item.id}?token=${encodeURIComponent(req.params.token)}`
-      : null
-  }));
+  `).all(req.params.token).map((item) => {
+    const mimeType = browserMediaType(item.mime_type, item.original_name);
+    const mediaUrl = publicMediaUrl(item.id, req.params.token);
+    return {
+      ...item,
+      mime_type: mimeType,
+      media_url: mediaUrl,
+      download_url: publicMediaUrl(item.id, req.params.token, { download: true }),
+      drive_preview_url: mimeType.startsWith("video/") ? drivePreviewUrl(item.drive_file_id) : null,
+      thumbnail_url: mimeType.startsWith("image/") ? mediaUrl : null
+    };
+  });
   res.json(report);
 });
 
-app.get("/api/public/media/:id", async (req, res, next) => {
+async function streamPublicMedia(req, res, next) {
   try {
     const token = String(req.query.token || "");
     const media = db.prepare(`
@@ -345,9 +373,15 @@ app.get("/api/public/media/:id", async (req, res, next) => {
 
     const driveResponse = await getDriveFileStream(media.drive_file_id, req.headers.range);
     const responseHeaders = driveResponse.headers || {};
-    const statusCode = req.headers.range && responseHeaders["content-range"]
+    const headerLookup = Object.fromEntries(
+      Object.entries(responseHeaders).map(([key, value]) => [key.toLowerCase(), value])
+    );
+    const statusCode = req.headers.range && headerLookup["content-range"]
       ? 206
       : driveResponse.status || 200;
+    const contentType = browserMediaType(media.mime_type, media.original_name);
+    const disposition = req.query.download === "1" ? "attachment" : "inline";
+
     res.status(statusCode);
     for (const [key, value] of Object.entries(responseHeaders)) {
       if (["content-length", "content-range", "accept-ranges"].includes(key.toLowerCase())) {
@@ -356,14 +390,21 @@ app.get("/api/public/media/:id", async (req, res, next) => {
     }
     res.setHeader("Accept-Ranges", "bytes");
     res.setHeader("Cache-Control", "private, max-age=300");
-    res.setHeader("Content-Type", media.mime_type);
-    res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(media.original_name)}"; filename*=UTF-8''${encodeURIComponent(media.original_name)}`);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${encodeURIComponent(media.original_name)}"; filename*=UTF-8''${encodeURIComponent(media.original_name)}`);
+    if (req.method === "HEAD") {
+      driveResponse.data.destroy();
+      return res.end();
+    }
     driveResponse.data.on("error", next);
     driveResponse.data.pipe(res);
   } catch (error) {
     next(error);
   }
-});
+}
+
+app.head("/api/public/media/:id", streamPublicMedia);
+app.get("/api/public/media/:id", streamPublicMedia);
 
 app.get("/api/public/villages/:token", (req, res) => {
   const village = db.prepare(
