@@ -578,6 +578,14 @@ app.get("/village/:token", (req, res) => {
 
 app.use((error, req, res, next) => {
   console.error(error);
+  const googleError = error.response?.data?.error || error.errors?.[0]?.reason || error.message;
+  if (String(googleError || "").includes("invalid_grant")) {
+    setSetting("google_refresh_token", "");
+    setSetting("drive_root_folder_id", "");
+    return res.status(503).json({
+      error: "Google Drive authorization has expired. Please ask an Admin to reconnect Google Drive from the Admin tab, then submit the report again."
+    });
+  }
   if (error.type === "entity.too.large") {
     return res.status(413).json({ error: `Upload chunks must be ${Math.floor(maxChunkBytes / 1024 / 1024)} MB or smaller.` });
   }
