@@ -632,8 +632,10 @@ async function loadGoogleStatus() {
   const status = await api("/api/admin/google/status");
   $("#googleStatus").textContent = status.connected
     ? `Connected to ${status.email}`
-    : "Google Drive is not connected.";
-  $("#disconnectGoogleButton").classList.toggle("hidden", !status.connected);
+    : status.email
+      ? `Google Drive authorization needs reconnecting for ${status.email}.`
+      : "Google Drive is not connected.";
+  $("#disconnectGoogleButton").classList.toggle("hidden", !status.connected && !status.email);
 }
 
 $("#connectGoogleButton").addEventListener("click", async () => {
@@ -647,8 +649,12 @@ $("#connectGoogleButton").addEventListener("click", async () => {
 
 $("#disconnectGoogleButton").addEventListener("click", async () => {
   if (!confirm("Disconnect Google Drive? New reports cannot be submitted until another account is connected.")) return;
-  await api("/api/admin/google/disconnect", { method: "POST" });
-  await loadGoogleStatus();
+  try {
+    await api("/api/admin/google/disconnect", { method: "POST" });
+    await loadGoogleStatus();
+  } catch (error) {
+    alert(error.message);
+  }
 });
 
 async function loadAdminVillages() {
