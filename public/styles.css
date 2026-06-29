@@ -81,6 +81,9 @@ main { width: min(1050px, calc(100% - 2rem)); margin: 0 auto 5rem; }
   background: linear-gradient(180deg, var(--orange), var(--blue), var(--green));
 }
 .report-card > * { position: relative; }
+.registration-card { border-top: 5px solid var(--orange); }
+.registration-prompt { margin: 1rem 0 0; padding: 1rem; border-radius: 14px; background: var(--blue-soft); font-weight: 800; }
+.registration-result { min-height: 1.5rem; font-size: 1.05rem; }
 .admin-card { border-top: 4px solid var(--blue); }
 h2 { margin: .25rem 0 .5rem; font-size: clamp(1.35rem, 4vw, 1.8rem); }
 p { line-height: 1.55; }

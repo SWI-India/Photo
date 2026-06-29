@@ -16,7 +16,9 @@ const {
   startResumableUpload,
   uploadResumableChunk,
   shareDriveFile,
-  getDriveFileStream
+  getDriveFileStream,
+  listVillagerFingerprints,
+  registerVillager
 } = require("./src/drive");
 
 const app = express();
@@ -108,6 +110,34 @@ app.post("/api/auth/change-password", authenticate, async (req, res) => {
 
 app.get("/api/villages", authenticate, (req, res) => {
   res.json(db.prepare("SELECT id, name FROM villages WHERE active = 1 ORDER BY name").all());
+});
+
+app.get("/api/villager-registrations/fingerprints", authenticate, async (req, res, next) => {
+  try {
+    res.json({ fingerprints: await listVillagerFingerprints() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/villager-registrations/check", authenticate, async (req, res, next) => {
+  try {
+    const fullName = String(req.body.fullName || "").trim().replace(/\s+/g, " ");
+    const fingerprint = String(req.body.fingerprint || "").toLowerCase();
+    if (fullName.length < 2 || fullName.length > 150) {
+      return res.status(400).json({ error: "Please enter the villager's full name." });
+    }
+    if (!/^[a-f0-9]{64}$/.test(fingerprint)) {
+      return res.status(400).json({ error: "Please enter a valid 12-digit Aadhaar number." });
+    }
+    res.json(await registerVillager({
+      fullName,
+      fingerprint,
+      registeredBy: { id: req.user.id, name: req.user.name, email: req.user.email }
+    }));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/reports", authenticate, (req, res) => {

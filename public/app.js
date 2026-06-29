@@ -81,6 +81,7 @@ async function bootstrap() {
     if (navigator.onLine) await loadReports();
     restoreDraft();
     await flushQueue();
+    await syncVillagerRegistrations().catch((error) => console.warn("Villager registry sync unavailable:", error.message));
     if (ADMIN_ROLES.has(state.user.role)) await loadAdmin();
   } catch (error) {
     if (!navigator.onLine && state.user) {
@@ -114,6 +115,7 @@ $("#loginForm").addEventListener("submit", async (event) => {
     localStorage.setItem("swiUser", JSON.stringify(state.user));
     showSignedIn();
     await Promise.all([loadVillages(), loadReports()]);
+    await syncVillagerRegistrations().catch((error) => console.warn("Villager registry sync unavailable:", error.message));
     if (ADMIN_ROLES.has(state.user.role)) await loadAdmin();
   } catch (error) {
     alert(error.message);
@@ -151,12 +153,124 @@ window.addEventListener("appinstalled", () => {
 
 $$(".tabs button").forEach((button) => button.addEventListener("click", () => {
   $$(".tabs button").forEach((item) => item.classList.toggle("active", item === button));
-  ["new", "history", "admin"].forEach((view) => {
+  ["new", "registration", "history", "admin"].forEach((view) => {
     $(`#${view}View`).classList.toggle("hidden", view !== button.dataset.view);
   });
   if (button.dataset.view === "history") loadReports().catch((error) => alert(error.message));
   if (button.dataset.view === "admin") loadAdmin().catch((error) => alert(error.message));
 }));
+
+const REGISTRATION_HASHES_KEY = "swiVillagerFingerprints";
+const REGISTRATION_QUEUE_KEY = "swiVillagerRegistrationQueue";
+
+function registrationFingerprints() {
+  return new Set(JSON.parse(localStorage.getItem(REGISTRATION_HASHES_KEY) || "[]"));
+}
+
+function saveRegistrationFingerprints(fingerprints) {
+  localStorage.setItem(REGISTRATION_HASHES_KEY, JSON.stringify([...new Set(fingerprints)]));
+}
+
+function pendingRegistrations() {
+  return JSON.parse(localStorage.getItem(REGISTRATION_QUEUE_KEY) || "[]");
+}
+
+function savePendingRegistrations(registrations) {
+  localStorage.setItem(REGISTRATION_QUEUE_KEY, JSON.stringify(registrations));
+}
+
+async function aadhaarFingerprint(number) {
+  const bytes = new TextEncoder().encode(number);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function syncVillagerRegistrations() {
+  if (!navigator.onLine || !state.token) return;
+  const fingerprints = registrationFingerprints();
+  const remote = await api("/api/villager-registrations/fingerprints");
+  for (const fingerprint of remote.fingerprints || []) fingerprints.add(fingerprint);
+
+  const remaining = [];
+  for (const registration of pendingRegistrations()) {
+    try {
+      await api("/api/villager-registrations/check", {
+        method: "POST",
+        body: JSON.stringify(registration)
+      });
+      fingerprints.add(registration.fingerprint);
+    } catch (error) {
+      console.warn("Villager registration remains pending:", error.message);
+      remaining.push(registration);
+    }
+  }
+  saveRegistrationFingerprints(fingerprints);
+  savePendingRegistrations(remaining);
+  await updateConnection();
+}
+
+$("#registrationForm").elements.aadhaarNumber.addEventListener("input", (event) => {
+  event.target.value = event.target.value.replace(/\D/g, "").slice(0, 12);
+  $("#registrationMessage").textContent = "";
+  $("#registrationMessage").classList.remove("success");
+});
+
+$("#registrationForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const button = $("#registrationSubmitButton");
+  const message = $("#registrationMessage");
+  const fullName = form.elements.fullName.value.trim().replace(/\s+/g, " ");
+  const aadhaarNumber = form.elements.aadhaarNumber.value.replace(/\D/g, "");
+  message.textContent = "";
+  message.classList.remove("success");
+
+  if (aadhaarNumber.length !== 12) {
+    message.textContent = "Please enter a valid 12-digit Aadhaar number.";
+    return;
+  }
+
+  button.disabled = true;
+  try {
+    const fingerprint = await aadhaarFingerprint(aadhaarNumber);
+    const known = registrationFingerprints();
+    const queued = pendingRegistrations();
+    if (known.has(fingerprint) || queued.some((item) => item.fingerprint === fingerprint)) {
+      message.textContent = "User exists in system - Please do not register";
+      return;
+    }
+
+    if (!navigator.onLine) {
+      queued.push({ id: crypto.randomUUID(), fullName, fingerprint, createdAt: Date.now() });
+      savePendingRegistrations(queued);
+      known.add(fingerprint);
+      saveRegistrationFingerprints(known);
+      message.textContent = "User Not Registered - Please go ahead. Saved offline and will sync automatically.";
+      message.classList.add("success");
+      form.reset();
+      await updateConnection();
+      return;
+    }
+
+    const result = await api("/api/villager-registrations/check", {
+      method: "POST",
+      body: JSON.stringify({ fullName, fingerprint })
+    });
+    known.add(fingerprint);
+    saveRegistrationFingerprints(known);
+    if (result.exists) {
+      message.textContent = "User exists in system - Please do not register";
+    } else {
+      message.textContent = "User Not Registered - Please go ahead";
+      message.classList.add("success");
+      form.reset();
+    }
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 async function loadVillages() {
   let villages;
@@ -773,8 +887,15 @@ async function updateConnection() {
   try { pending = (await getQueuedReports()).length; } catch {}
   $("#connectionBadge").textContent = `${online ? "Online" : "Offline"}${pending ? ` · ${pending} pending` : ""}`;
   $("#connectionBadge").classList.toggle("offline", !online);
+  const registrationPending = pendingRegistrations().length;
+  $("#registrationConnectionBadge").textContent =
+    `${online ? "Online" : "Offline"}${registrationPending ? ` · ${registrationPending} pending` : ""}`;
+  $("#registrationConnectionBadge").classList.toggle("offline", !online);
 }
-window.addEventListener("online", () => flushQueue());
+window.addEventListener("online", () => {
+  flushQueue();
+  syncVillagerRegistrations().catch((error) => console.warn("Villager registry sync unavailable:", error.message));
+});
 window.addEventListener("offline", updateConnection);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && state.wakeLock?.released) {

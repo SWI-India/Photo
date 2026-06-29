@@ -4,6 +4,7 @@ const { google } = require("googleapis");
 const { Document, Packer, Paragraph, HeadingLevel } = require("docx");
 const sharp = require("sharp");
 const { getSetting, setSetting } = require("./db");
+const { Readable } = require("node:stream");
 
 function getOAuthClient() {
   const clientId = process.env.GOOGLE_CLIENT_ID;
@@ -59,6 +60,69 @@ async function ensureReportFolder(village, date, reportType) {
   const dateFolderName = `${date} ${reportType || "General Visit"}`;
   const dateId = await findOrCreateFolder(drive, dateFolderName, villageId);
   return { drive, folderId: dateId };
+}
+
+async function ensureVillagerRegistryFolder(drive) {
+  let folderId = getSetting("villager_registry_folder_id");
+  if (folderId) return folderId;
+  folderId = await findOrCreateFolder(drive, "SWI Villager Registration Registry");
+  setSetting("villager_registry_folder_id", folderId);
+  return folderId;
+}
+
+async function listVillagerFingerprints() {
+  const drive = requireDrive();
+  const folderId = await ensureVillagerRegistryFolder(drive);
+  const fingerprints = [];
+  let pageToken;
+  do {
+    const result = await drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: "nextPageToken,files(appProperties)",
+      pageSize: 1000,
+      pageToken,
+      spaces: "drive"
+    });
+    for (const file of result.data.files || []) {
+      const fingerprint = file.appProperties?.aadhaarFingerprint;
+      if (/^[a-f0-9]{64}$/.test(fingerprint || "")) fingerprints.push(fingerprint);
+    }
+    pageToken = result.data.nextPageToken;
+  } while (pageToken);
+  return fingerprints;
+}
+
+async function registerVillager({ fullName, fingerprint, registeredBy }) {
+  const drive = requireDrive();
+  const folderId = await ensureVillagerRegistryFolder(drive);
+  const existing = await drive.files.list({
+    q: `'${folderId}' in parents and trashed=false and appProperties has { key='aadhaarFingerprint' and value='${fingerprint}' }`,
+    fields: "files(id)",
+    pageSize: 1,
+    spaces: "drive"
+  });
+  if (existing.data.files?.length) return { exists: true };
+
+  const registeredAt = new Date().toISOString();
+  const record = JSON.stringify({
+    fullName,
+    aadhaarFingerprint: fingerprint,
+    registeredBy,
+    registeredAt
+  }, null, 2);
+  await drive.files.create({
+    requestBody: {
+      name: `${registeredAt.slice(0, 10)} - ${fullName}.json`,
+      parents: [folderId],
+      appProperties: { aadhaarFingerprint: fingerprint }
+    },
+    media: {
+      mimeType: "application/json",
+      body: Readable.from(record)
+    },
+    fields: "id"
+  });
+  return { exists: false };
 }
 
 async function buildReportDocument(report) {
@@ -154,7 +218,6 @@ async function uploadReportBundle(report, files) {
   }
 
   const documentBuffer = await buildReportDocument(report);
-  const { Readable } = require("node:stream");
   const documentName = `${report.reportDate} - ${report.reportType || "General Visit"} - ${report.personName} - Daily Report.docx`;
   const documentResponse = await drive.files.create({
     requestBody: { name: documentName, parents: [folderId] },
@@ -268,5 +331,7 @@ module.exports = {
   startResumableUpload,
   uploadResumableChunk,
   shareDriveFile,
-  getDriveFileStream
+  getDriveFileStream,
+  listVillagerFingerprints,
+  registerVillager
 };

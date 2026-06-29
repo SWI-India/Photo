@@ -43,6 +43,7 @@
 
       <nav class="tabs" aria-label="Main navigation">
         <button data-view="new" class="active">New report</button>
+        <button data-view="registration">Village check</button>
         <button data-view="history">History</button>
         <button data-view="admin" id="adminTab" class="hidden">Admin</button>
       </nav>
@@ -87,6 +88,28 @@
           <p id="locationStatus" class="field-note">Location not captured</p>
           <button type="submit" id="submitButton">Submit report</button>
           <p id="formMessage" class="message" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section id="registrationView" class="card registration-card hidden">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">New Village</span>
+            <h2>Villager Registration Check</h2>
+          </div>
+          <span id="registrationConnectionBadge" class="badge">Online</span>
+        </div>
+        <p class="registration-prompt">Please enter Full Name &amp; Aadhaar Number of the Villager</p>
+        <form id="registrationForm">
+          <label>Full Name
+            <input name="fullName" type="text" maxlength="150" autocomplete="name" required>
+          </label>
+          <label>Aadhaar Number
+            <input name="aadhaarNumber" type="text" inputmode="numeric" pattern="[0-9]{12}" minlength="12" maxlength="12" autocomplete="off" placeholder="Enter 12-digit number" required>
+          </label>
+          <p class="field-note">For privacy, the Aadhaar number itself is not stored. Only a one-way fingerprint is used to identify duplicates.</p>
+          <button type="submit" id="registrationSubmitButton">Submit</button>
+          <p id="registrationMessage" class="message registration-result" aria-live="polite"></p>
         </form>
       </section>
 
